@@ -3,5 +3,14 @@ node_modules/
 .DS_Store
 .env
 .env.local
-# Never commit the real API key file
 image-gen.json
+
+# Pix Agent
+.pi/
+.pi-lens/
+
+# Rust
+/target/
+Cargo.lock
+*.swp
+*.swo

@@ -1,122 +1,192 @@
 # openrouter-image
 
-omp v18 extension that exposes OpenRouter's GPT Image models as a tool (`xd://openrouter_image`).
+Standalone Rust CLI for generating images via OpenRouter's GPT Image models. Agent-steerable: `--json` mode emits structured results on stdout and NDJSON progress events on stderr, making it easy to drive from an LLM loop or CI pipeline.
 
 ## Features
 
-- **Models**: `gpt-image-2` (default), `gpt-image-1`, `gpt-image-1-mini`, `gpt-5-image`, `gpt-5-image-mini`, `gpt-5.4-image-2`
-- **Aspect ratios**: `1:1`, `3:2`, `2:3`, `4:3`, `3:4` (default), `16:9`, `9:16`, `21:9`, `auto`
-- **Reference image** support (local file → base64 → OpenRouter `input_references`)
-- **Persistent API key** via `~/.omp/agent/image-gen.json` (chmod 600) — no env-var setup needed
-- **Live counter** in TUI while generating (updates every second)
-- **Async/non-blocking** execution — TUI stays responsive, prompt stays visible while image generates
-- **Box-rendered output** with state-aware border color (muted → accent → success/error)
-- **Full prompt visible** during generation (read while waiting)
+- **6 hardcoded models** — no auto-discovery, stable API
+- **Reference image support** — local file, data URL, or HTTPS URL
+- **Structured output** — `--json` mode for agent tooling (NDJSON stderr + result envelope stdout)
+- **Stable exit codes** — `0` ok, `2` bad args, `3` no/invalid key, `4` API error, `5` timeout, `6` I/O, `130` SIGINT
+- **XDG-free default** — saves to `~/generated_images/` (override with `--output-dir`)
+- **Retry on 5xx** — 2× with exponential backoff (`--no-retry` to disable)
 
-## Installation
-
-### 1. Drop into omp extensions dir
+## Quick start
 
 ```bash
-cp -r . ~/.omp/agent/extensions/openrouter-image-package/
+# Install (from source)
+cargo install --path .
+
+# Configure API key (env var takes precedence)
+export OPENROUTER_API_KEY=sk-or-v1-…
+
+# Generate one image
+openrouter-image gen --prompt "blue circle on white background"
+
+# Override output dir
+openrouter-image gen --prompt "a red square" --output-dir ./images
 ```
 
-Or install via npm (if published):
+## Commands
 
-```bash
-# coming soon
+```
+openrouter-image gen        # Generate image(s)
+openrouter-image models     # List supported models
+openrouter-image info       # Version + key diagnostic
+openrouter-image schema     # Print JSON result schema
 ```
 
-### 2. Configure API key
+## `gen` subcommand
 
-Copy the example file and fill in your key:
+```
+openrouter-image gen [OPTIONS]
+  -p, --prompt <TEXT>             Prompt text (required)
+      --prompt-file <PATH|-">     Read prompt from file or stdin (-)
+  -m, --model <SLUG>              Model slug (default: openai/gpt-image-2)
+      --reference <REF>           Local file, data: URL, or HTTPS URL
+      --aspect-ratio <RATIO>      1:1 | 3:2 | 2:3 | 4:3 | 3:4 | 16:9 | 9:16 | 21:9 | auto (default: 16:9)
+      --quality <Q>                auto | low | medium | high
+      --background <MODE>         auto | transparent | opaque
+      --output-format <FMT>       png | jpeg | webp | svg (default: png)
+      --resolution <RES>          512 | 1K | 2K | 4K
+  -n, --n <1-10>                  Number of images (default: 1)
+      --seed <U64>                Random seed for reproducibility
+      --output-dir <DIR>          Output directory (default: ~/generated_images/)
+      --timeout-ms <N>            Timeout in ms (default: 120000)
+      --no-retry                  Disable automatic retry on 5xx
+  -j, --json                      Structured JSON on stdout, NDJSON progress on stderr
+  -q, --quiet                     Suppress all progress output
+```
+
+## Models
+
+| Model | Notes |
+|---|---|
+| `openai/gpt-image-2` | **Default.** 9 aspect ratios |
+| `openai/gpt-image-1` | 4 ratios, transparent background |
+| `openai/gpt-image-1-mini` | Cost-optimized |
+| `openai/gpt-5-image` | Reasoning + image |
+| `openai/gpt-5-image-mini` | Reasoning + image, cost-optimized |
+| `openai/gpt-5.4-image-2` | Latest generation |
+
+## Agent tooling
+
+### `--json` mode
+
+```
+# stdout: one JSON object at the end
+# stderr: NDJSON, one line per event
+```
 
 ```bash
-cp image-gen.example.json ~/.omp/agent/image-gen.json
-# edit and replace sk-or-v1-REPLACE_ME with your key
+openrouter-image gen --prompt "blue circle" --json 2>&1
+```
+
+**stderr (NDJSON progress):**
+```json
+{"event":"progress","elapsed_ms":1000}
+{"event":"progress","elapsed_ms":2000}
+{"event":"progress","elapsed_ms":3000}
+{"event":"http_status","status":200}
+{"event":"images_received","count":1}
+{"event":"images_saved","paths":["/home/user/generated_images/openrouter-1234567890-1.png"]}
+```
+
+**stdout (final result):**
+```json
+{
+  "schema_version": "1.0",
+  "status": "ok",
+  "images": [
+    {
+      "path": "/home/user/generated_images/openrouter-1234567890-1.png",
+      "media_type": "image/png",
+      "b64_length": 48291
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 8,
+    "completion_tokens": 3,
+    "total_tokens": 11,
+    "cost": 0.000120
+  },
+  "model": "openai/gpt-image-2",
+  "n": 1,
+  "elapsed_ms": 4210,
+  "output_dir": "/home/user/generated_images",
+  "warnings": []
+}
+```
+
+### `openrouter-image schema`
+
+Prints the JSON Schema for the result envelope. Agents can fetch and parse it to understand the output format before running a generation.
+
+### Exit codes
+
+| Code | Meaning |
+|---|---|
+| `0` | Success |
+| `1` | Unknown error |
+| `2` | Invalid arguments / schema violation |
+| `3` | No API key / key invalid (401/402) |
+| `4` | OpenRouter API error (4xx non-auth) |
+| `5` | Timeout |
+| `6` | I/O error (output-dir) |
+| `130` | Interrupted (SIGINT/SIGTERM) |
+
+## Configuration
+
+### API key lookup (first hit wins)
+
+1. `OPENROUTER_API_KEY` env var
+2. `~/.omp/agent/image-gen.json` fields: `apiKey`, `OPENROUTER_API_KEY`, `openrouter_api_key`
+
+```bash
+# Option A: env var (recommended for CI/agents)
+export OPENROUTER_API_KEY=sk-or-v1-…
+
+# Option B: config file
+mkdir -p ~/.omp/agent
+cp examples/image-gen.example.json ~/.omp/agent/image-gen.json
 chmod 600 ~/.omp/agent/image-gen.json
+# edit and replace sk-or-v1-REPLACE_ME with your key
 ```
 
 Get a key at <https://openrouter.ai/keys>.
 
-Alternatively, set `OPENROUTER_API_KEY` as an env var — the file is only read if the env var is missing.
+### Output directory
 
-### 3. Verify
+Default: `~/generated_images/`. Override with `--output-dir`. Files are named `openrouter-<timestamp>-<N>.<ext>`.
 
-Trigger any tool call to xd://openrouter_image. If the key is valid, you get a PNG in `~/.omp/agent/generated-images/`.
+## Reference images
 
-## Usage
+Pass a reference image as visual context:
 
-```json
-{
-  "prompt": "A minimal blue circle on white background",
-  "model": "openai/gpt-image-2",
-  "aspect_ratio": "1:1",
-  "quality": "high",
-  "reference_image": "/tmp/sketch.png",
-  "n": 1
-}
+```bash
+# Local file (PNG/JPG/GIF/WEBP/SVG — MIME detected from extension)
+openrouter-image gen --prompt "a logo based on this sketch" --reference ./sketch.png
+
+# Data URL (already base64-encoded)
+openrouter-image gen --prompt "variation of this" --reference "data:image/png;base64,..."
+
+# HTTPS URL
+openrouter-image gen --prompt "style transfer" --reference "https://example.com/style.jpg"
 ```
-
-All fields except `prompt` are optional.
-
-### Parameters
-
-| Field | Type | Default | Notes |
-|---|---|---|---|
-| `prompt` | string | — | required |
-| `model` | string | `openai/gpt-image-2` | see Models list above |
-| `reference_image` | string (path) | — | local PNG/JPG/JPEG/GIF/WEBP, base64-encoded automatically |
-| `aspect_ratio` | string | `16:9` | see list above |
-| `quality` | string | `auto` | `auto`, `low`, `medium`, `high` |
-| `background` | string | — | `auto`, `transparent`, `opaque` |
-| `output_format` | string | `png` | `png`, `jpeg`, `webp`, `svg` |
-| `resolution` | string | — | `512`, `1K`, `2K`, `4K` |
-| `n` | number | `1` | 1–10 |
-| `seed` | number | — | for reproducibility |
-
-## Architecture
-
-### Key resolution
-
-Lookup order (first hit wins):
-
-1. `process.env.OPENROUTER_API_KEY`
-2. `~/.omp/agent/image-gen.json` fields: `apiKey`, `OPENROUTER_API_KEY`, `openrouter_api_key`
-
-The file path is `IMAGE_GEN_SETTINGS_FILE` and is created from `homedir() + .omp/agent/image-gen.json`.
-
-### Live updates
-
-`executeOpenrouterImage` takes an `onUpdate` callback that fires every second while the API call is in-flight. Each tick sends a partial `AgentToolResult` with `liveStatus: "generating"` and `elapsedSeconds: N`. omp re-renders via `renderResult` on every update.
-
-### Render states
-
-`renderResult` switches between 4 states based on `liveStatus`:
-
-| State | Border color | Content |
-|---|---|---|
-| `generating` / `queued` | accent | Header + ⏳ counter + full prompt |
-| `done` | success | Header + stats + paths |
-| `error` | error | Header + error message |
-| (initial `renderCall`) | muted | Header + meta + full prompt |
-
-Border glyphs come from `theme.boxRound` (rounded Unicode).
-
-### Abort / cancel
-
-The omp `signal` propagates through `executeOpenrouterImage` → `callImageApi` → the internal `AbortController`. Cancellation aborts the fetch immediately, no retry.
 
 ## Development
 
 ```bash
-bunx tsc --noEmit --skipLibCheck \
-  --target ES2022 --module NodeNext --moduleResolution NodeNext \
-  --allowSyntheticDefaultImports --strict --esModuleInterop \
-  --types node ./index.ts
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo test
+cargo build --release
 ```
 
-The remaining baseline errors are `Text`-constructor mismatches with the `Component` interface — a known mismatch in `@oh-my-pi/pi-tui` types vs runtime that affects all extensions, not specific to this plugin.
+Smoke tests (requires `OPENROUTER_API_KEY`):
+```bash
+OPENROUTER_API_KEY=sk-or-v1-… cargo run -- gen --prompt "red circle"
+```
 
 ## License
 
