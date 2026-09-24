@@ -29,10 +29,14 @@ pub use error_mod::ApiError;
 pub use error_mod::ConfigError;
 pub use error_mod::ReferenceError;
 pub use list_models::{
-    fetch_image_models, is_image_model, resolution_values, supports_resolution, Architecture,
+    fetch_image_models, fetch_model_endpoints, is_image_model, model_id_to_endpoints_path,
+    resolution_values, supports_resolution, Architecture, EndpointRecord, EndpointResponse,
     ModelEntry, ModelsResponse, ParamSpec,
 };
-pub use models_mod::{ApiResponse, GenerationParams, OutputFormat};
+pub use models_mod::{
+    ApiResponse, CompletionTokensDetails, CostDetails, GenerationParams, OutputFormat,
+    PromptTokensDetails, ProviderRouting, TraceMetadata, Usage,
+};
 pub use output::OutputMode;
 pub use paths_mod::{default_output_dir, resolve_output_paths};
 pub use progress_mod::ProgressEvent;
@@ -40,10 +44,10 @@ pub use progress_mod::ProgressEvent;
 pub use client_mod::HttpClient;
 
 // ---------------------------------------------------------------------------
-// Data URI validation (re-exported for CLI use)
+// Reference image validation (re-exported for CLI use)
 // ---------------------------------------------------------------------------
 
-pub use reference_mod::validate_data_uri;
+pub use reference_mod::validate_reference;
 
 // ---------------------------------------------------------------------------
 // Core API
@@ -55,7 +59,7 @@ pub struct GenerationResult {
     pub saved_paths: Vec<PathBuf>,
     pub media_type: String,
     pub b64_len: usize,
-    pub usage: Option<models_mod::Usage>,
+    pub usage: Option<Usage>,
     pub model: String,
     pub n: u8,
     pub elapsed_ms: u64,

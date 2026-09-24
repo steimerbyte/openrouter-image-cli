@@ -57,6 +57,18 @@ async fn test_client_200_single_response_parsing() {
         output_paths: vec![output_path.clone()],
         n: 1,
         resolution: None,
+        aspect_ratio: None,
+        background: None,
+        output_format: None,
+        output_compression: None,
+        quality: None,
+        seed: None,
+        size: None,
+        user: None,
+        session_id: None,
+        provider: None,
+        trace: None,
+        stream: false,
         timeout_ms: 30_000,
     };
 

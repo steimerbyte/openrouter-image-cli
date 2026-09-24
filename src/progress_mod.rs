@@ -1,4 +1,7 @@
 //! Progress event types emitted during a generation run.
+//!
+//! In `--json` mode, events are emitted as NDJSON on stderr.
+//! In streaming mode, partial image chunks and completion counts are also emitted.
 
 use serde::Serialize;
 
@@ -20,6 +23,10 @@ pub enum ProgressEvent {
     ImagesReceived { count: usize },
     /// Images saved to disk.
     ImagesSaved { paths: Vec<String> },
+    /// A partial image chunk received via SSE streaming.
+    StreamPartial { index: u8, b64_length: usize },
+    /// Streaming completed — final image count.
+    StreamComplete { count: u8 },
 }
 
 impl ProgressEvent {

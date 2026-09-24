@@ -6,8 +6,6 @@
 //! Tests that rely on a specific HOME value set their own temp HOME via
 //! `std::env::set_var("HOME", ...)` before invoking the library.
 
-
-
 fn home() -> std::path::PathBuf {
     std::env::var("HOME")
         .map(std::path::PathBuf::from)

@@ -42,23 +42,12 @@ async fn test_list_models_filter() {
     // Image model with full resolution support
     let mut seedream_sp = BTreeMap::new();
     seedream_sp.insert("resolution".to_string(), param_enum(&["1K", "2K", "4K"]));
-    let seedream = make_entry_json(
-        "bytedance-seed/seedream-4.5",
-        &["image"],
-        seedream_sp,
-    );
+    let seedream = make_entry_json("bytedance-seed/seedream-4.5", &["image"], seedream_sp);
 
     // Image model without resolution (only output_format and n)
     let mut ming_sp = BTreeMap::new();
-    ming_sp.insert(
-        "output_format".to_string(),
-        param_enum(&["png", "webp"]),
-    );
-    let ming = make_entry_json(
-        "inclusionai/ming-image-0.1",
-        &["image"],
-        ming_sp,
-    );
+    ming_sp.insert("output_format".to_string(), param_enum(&["png", "webp"]));
+    let ming = make_entry_json("inclusionai/ming-image-0.1", &["image"], ming_sp);
 
     // Image model with 1K only
     let mut krea_sp = BTreeMap::new();
@@ -107,10 +96,7 @@ async fn test_list_models_filter() {
         .find(|m| m.id == "inclusionai/ming-image-0.1")
         .unwrap();
     assert!(!openrouter_image_core::supports_resolution(ming_entry));
-    assert_eq!(
-        openrouter_image_core::resolution_values(ming_entry),
-        None
-    );
+    assert_eq!(openrouter_image_core::resolution_values(ming_entry), None);
 
     let krea_entry = models.iter().find(|m| m.id == "krea/krea-2-large").unwrap();
     assert!(openrouter_image_core::supports_resolution(krea_entry));

@@ -8,7 +8,11 @@ use serde_json::{json, Value};
 use crate::list_models::ModelEntry;
 use crate::GenerationResult;
 
-/// JSON result envelope written to stdout.
+// ---------------------------------------------------------------------------
+// Result envelope types
+// ---------------------------------------------------------------------------
+
+/// JSON result envelope written to stdout on success.
 #[derive(Debug, Serialize)]
 struct ResultEnvelope {
     schema_version: &'static str,
@@ -22,20 +26,68 @@ struct ResultEnvelope {
     warnings: Vec<String>,
 }
 
+/// One entry per saved image file.
 #[derive(Debug, Serialize)]
 struct ImageEntry {
     path: String,
     media_type: String,
     b64_length: usize,
+    /// Revised prompt returned by OpenAI-compatible models.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    revised_prompt: Option<String>,
+    /// Background composition of the generated image.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    background: Option<String>,
 }
 
+/// Token and cost data, enriched with new OpenRouter fields.
 #[derive(Debug, Serialize)]
 struct UsageEntry {
     prompt_tokens: Option<i64>,
     completion_tokens: Option<i64>,
     total_tokens: Option<i64>,
     cost: Option<f64>,
+    /// Whether the request used a bring-your-own-key model.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    is_byok: Option<bool>,
+    /// Detailed cost breakdown.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cost_details: Option<CostDetailsEntry>,
+    /// Prompt token breakdown.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    prompt_tokens_details: Option<PromptTokensDetailsEntry>,
+    /// Completion token breakdown.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    completion_tokens_details: Option<CompletionTokensDetailsEntry>,
 }
+
+#[derive(Debug, Serialize)]
+struct CostDetailsEntry {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    upstream_inference_cost: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    upstream_inference_prompt_cost: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    upstream_inference_completions_cost: Option<f64>,
+}
+
+#[derive(Debug, Serialize)]
+struct PromptTokensDetailsEntry {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cached_tokens: Option<i64>,
+}
+
+#[derive(Debug, Serialize)]
+struct CompletionTokensDetailsEntry {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_tokens: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    image_tokens: Option<i64>,
+}
+
+// ---------------------------------------------------------------------------
+// Converters
+// ---------------------------------------------------------------------------
 
 impl From<&crate::models_mod::Usage> for UsageEntry {
     fn from(u: &crate::models_mod::Usage) -> Self {
@@ -44,24 +96,52 @@ impl From<&crate::models_mod::Usage> for UsageEntry {
             completion_tokens: u.completion_tokens,
             total_tokens: u.total_tokens,
             cost: u.cost,
+            is_byok: u.is_byok,
+            cost_details: u.cost_details.as_ref().map(|cd| CostDetailsEntry {
+                upstream_inference_cost: cd.upstream_inference_cost,
+                upstream_inference_prompt_cost: cd.upstream_inference_prompt_cost,
+                upstream_inference_completions_cost: cd.upstream_inference_completions_cost,
+            }),
+            prompt_tokens_details: u.prompt_tokens_details.as_ref().map(|ptd| {
+                PromptTokensDetailsEntry {
+                    cached_tokens: ptd.cached_tokens,
+                }
+            }),
+            completion_tokens_details: u.completion_tokens_details.as_ref().map(|ctd| {
+                CompletionTokensDetailsEntry {
+                    reasoning_tokens: ctd.reasoning_tokens,
+                    image_tokens: ctd.image_tokens,
+                }
+            }),
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
 
 /// Write the final structured JSON result to stdout.
 pub fn final_result(result: &GenerationResult) {
     let images: Vec<ImageEntry> = result
         .saved_paths
         .iter()
-        .map(|p| ImageEntry {
-            path: p.display().to_string(),
-            media_type: result.media_type.clone(),
-            b64_length: result.b64_len,
+        .map(|p| {
+            // revised_prompt and background come from the API response;
+            // they are not directly available on GenerationResult.
+            // The caller can pass them via a separate mechanism if needed.
+            ImageEntry {
+                path: p.display().to_string(),
+                media_type: result.media_type.clone(),
+                b64_length: result.b64_len,
+                revised_prompt: None,
+                background: None,
+            }
         })
         .collect();
 
     let envelope = ResultEnvelope {
-        schema_version: "1.0",
+        schema_version: "1.1",
         status: "ok",
         images,
         usage: result.usage.as_ref().map(UsageEntry::from),
@@ -113,37 +193,41 @@ pub fn models_table(models: &[ModelEntry]) {
     );
     println!();
     println!(
-        "{:50} {:>15} {:>4}",
-        "ID", "Resolution", "Out"
+        "{:50} {:>15} {:>4} {:>4}",
+        "ID", "Resolution", "Str", "Out"
     );
-    println!("{}", "-".repeat(75));
+    println!("{}", "-".repeat(78));
     for m in models {
         let res = resolution_values(m)
             .map(|v| v.join(","))
             .unwrap_or_else(|| "—".to_string());
+        let stream = if m.supports_streaming { "yes" } else { "—" };
         let out = if is_image_model(m) { "img" } else { "—" };
-        println!("{:50} {:>15} {:>4}", m.id, res, out);
+        println!("{:50} {:>15} {:>4} {:>4}", m.id, res, stream, out);
     }
     println!();
     println!("Total: {} image-capable model(s)", models.len());
     println!("Default: bytedance-seed/seedream-4.5  (supports 1K, 2K, 4K)");
     println!();
     println!("Resolution = enum values from supported_parameters.resolution.");
+    println!("Str = model supports streaming (SSE partial images).");
     println!("Out = architecture.output_modalities contains 'image'.");
+    println!();
+    println!("Use 'openrouter-image endpoints <model-id>' for per-endpoint details.");
 }
 
 /// Return the JSON Schema for the result envelope.
 pub fn schema() -> Value {
     json!({
         "$schema": "http://json-schema.org/draft-07/schema#",
-        "title": "openrouter-image result v1.0",
+        "title": "openrouter-image result v1.1",
         "description": "Structured result emitted by openrouter-image --json on stdout.",
         "type": "object",
         "required": ["schema_version", "status", "images", "model", "elapsed_ms"],
         "properties": {
             "schema_version": {
                 "type": "string",
-                "const": "1.0",
+                "const": "1.1",
                 "description": "Bump on breaking changes to the result schema."
             },
             "status": {
@@ -160,7 +244,9 @@ pub fn schema() -> Value {
                     "properties": {
                         "path": { "type": "string", "description": "Absolute path to the saved image." },
                         "media_type": { "type": "string", "description": "MIME type, e.g. image/png." },
-                        "b64_length": { "type": "integer", "description": "Length of the base64 payload." }
+                        "b64_length": { "type": "integer", "description": "Length of the base64 payload." },
+                        "revised_prompt": { "type": ["string", "null"], "description": "Revised prompt returned by OpenAI-compatible models." },
+                        "background": { "type": ["string", "null"], "description": "Background composition of the generated image." }
                     }
                 }
             },
@@ -171,7 +257,29 @@ pub fn schema() -> Value {
                     "prompt_tokens": { "type": ["integer", "null"] },
                     "completion_tokens": { "type": ["integer", "null"] },
                     "total_tokens": { "type": ["integer", "null"] },
-                    "cost": { "type": ["number", "null"] }
+                    "cost": { "type": ["number", "null"] },
+                    "is_byok": { "type": ["boolean", "null"], "description": "Whether the request used a bring-your-own-key model." },
+                    "cost_details": {
+                        "type": ["object", "null"],
+                        "properties": {
+                            "upstream_inference_cost": { "type": ["number", "null"] },
+                            "upstream_inference_prompt_cost": { "type": ["number", "null"] },
+                            "upstream_inference_completions_cost": { "type": ["number", "null"] }
+                        }
+                    },
+                    "prompt_tokens_details": {
+                        "type": ["object", "null"],
+                        "properties": {
+                            "cached_tokens": { "type": ["integer", "null"] }
+                        }
+                    },
+                    "completion_tokens_details": {
+                        "type": ["object", "null"],
+                        "properties": {
+                            "reasoning_tokens": { "type": ["integer", "null"] },
+                            "image_tokens": { "type": ["integer", "null"] }
+                        }
+                    }
                 }
             },
             "model": { "type": "string", "description": "Model slug used for generation." },

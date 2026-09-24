@@ -20,7 +20,7 @@ pub fn info(key_status: &str, masked_key: &str, config_path: &Path, config_exist
         println!("  exists:  no — set OPENROUTER_API_KEY env var instead");
     }
     println!();
-    println!("Default output: ./output.png  (single) / ./output-N.png (multiple)");
+    println!("Default output: ~/generated-images/output.png  (single) / ~/generated-images/output-N.png (multiple)");
     println!("  override with: -o FILE or --output-dir DIR");
     println!();
     println!("Config lookup: OPENROUTER_API_KEY env > ~/.config/openrouter-image/config.toml");

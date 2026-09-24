@@ -28,10 +28,11 @@
 //! }
 //! ```
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::error_mod::ApiError;
 
@@ -57,14 +58,19 @@ pub struct ModelEntry {
     #[serde(default)]
     pub description: Option<String>,
     #[serde(default)]
-    pub created: Option<i64>,
+    created: Option<i64>,
     #[serde(default)]
     pub architecture: Option<Architecture>,
-    /// Per-endpoint parameter support, e.g. `{"resolution": {"type":"enum","values":["1K","2K","4K"]}}`.
+    /// Per-endpoint parameter support, e.g.
+    /// `{"resolution": {"type":"enum","values":["1K","2K","4K"]}}`.
     #[serde(default)]
     pub supported_parameters: BTreeMap<String, ParamSpec>,
     #[serde(default)]
     pub supports_streaming: bool,
+    /// Per-model endpoints URL returned by the API.
+    /// e.g. "/api/v1/images/models/bytedance-seed/seedream-4.5/endpoints"
+    #[serde(default)]
+    pub endpoints: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -177,13 +183,98 @@ pub async fn fetch_image_models(
     // All entries from this endpoint are image-capable by definition
     // (output_modalities always contains "image" per OpenRouter docs).
     // Still filter for defence-in-depth.
-    let image_models: Vec<ModelEntry> = models
-        .data
-        .into_iter()
-        .filter(is_image_model)
-        .collect();
+    let image_models: Vec<ModelEntry> = models.data.into_iter().filter(is_image_model).collect();
 
     Ok(image_models)
+}
+
+// ---------------------------------------------------------------------------
+// Per-model endpoint details
+// ---------------------------------------------------------------------------
+
+/// Response from GET /api/v1/images/models/{author}/{slug}/endpoints.
+///
+/// Actual shape from OpenRouter (Sep 2026):
+/// ```json
+/// {
+///   "id": "bytedance-seed/seedream-4.5",
+///   "endpoints": [
+///     { "provider_name": "...", "provider_slug": "...", ... }
+///   ]
+/// }
+/// ```
+#[allow(dead_code)]
+#[derive(Debug, Clone, Deserialize)]
+pub struct EndpointResponse {
+    pub id: String,
+    pub endpoints: Vec<EndpointRecord>,
+}
+
+/// One provider endpoint for a model.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct EndpointRecord {
+    pub provider_name: String,
+    pub provider_slug: String,
+    #[serde(default)]
+    pub pricing: Value,
+    #[serde(default)]
+    pub supported_parameters: BTreeMap<String, ParamSpec>,
+    #[serde(default)]
+    pub passthrough: Option<HashMap<String, Value>>,
+}
+
+/// Build the endpoints path from a model ID.
+///
+/// e.g. `"bytedance-seed/seedream-4.5"` →
+/// `"/api/v1/images/models/bytedance-seed/seedream-4.5/endpoints"`
+#[allow(dead_code)]
+pub fn model_id_to_endpoints_path(model_id: &str) -> String {
+    format!("/api/v1/images/models/{}/endpoints", model_id)
+}
+
+/// Fetch per-endpoint details for a specific model.
+///
+/// Calls `GET https://openrouter.ai/api/v1/images/models/{author}/{slug}/endpoints`.
+#[allow(dead_code)]
+pub async fn fetch_model_endpoints(
+    client: &Client,
+    api_key: &str,
+    model_id: &str,
+    base_url: Option<&str>,
+) -> Result<Vec<EndpointRecord>, ApiError> {
+    let base = base_url.unwrap_or("https://openrouter.ai");
+    let path = model_id_to_endpoints_path(model_id);
+    let url = format!("{}{}", base.trim_end_matches('/'), path);
+
+    let resp = client
+        .get(&url)
+        .header("Authorization", format!("Bearer {}", api_key))
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .map_err(|e| {
+            if e.is_timeout() {
+                ApiError::Timeout(std::time::Duration::from_secs(30))
+            } else {
+                ApiError::Network(e)
+            }
+        })?;
+
+    let status = resp.status().as_u16();
+    let body = resp.text().await.unwrap_or_default();
+
+    if !(200..=299).contains(&status) {
+        return Err(ApiError::from_status(status, &body));
+    }
+
+    let endpoint_resp: EndpointResponse =
+        serde_json::from_str(&body).map_err(|e| ApiError::Http {
+            status: 500,
+            message: format!("failed to parse endpoints response: {}", e),
+        })?;
+
+    Ok(endpoint_resp.endpoints)
 }
 
 #[cfg(test)]
@@ -203,6 +294,7 @@ mod tests {
             }),
             supported_parameters: BTreeMap::new(),
             supports_streaming: false,
+            endpoints: None,
         }
     }
 
@@ -229,13 +321,16 @@ mod tests {
             }),
             supported_parameters: sp,
             supports_streaming: false,
+            endpoints: None,
         }
     }
 
     #[test]
     fn is_image_model_detects_image_output_modality() {
         assert!(is_image_model(&entry_with_output_modalities(&["image"])));
-        assert!(is_image_model(&entry_with_output_modalities(&["text", "image"])));
+        assert!(is_image_model(&entry_with_output_modalities(&[
+            "text", "image"
+        ])));
         assert!(!is_image_model(&entry_with_output_modalities(&["text"])));
         assert!(!is_image_model(&entry_with_output_modalities(&[])));
     }
@@ -259,5 +354,17 @@ mod tests {
         let mut e2 = entry_with_resolution(&["1K"]);
         e2.supported_parameters.remove("resolution");
         assert_eq!(resolution_values(&e2), None);
+    }
+
+    #[test]
+    fn model_id_to_endpoints_path_generates_correct_path() {
+        assert_eq!(
+            model_id_to_endpoints_path("bytedance-seed/seedream-4.5"),
+            "/api/v1/images/models/bytedance-seed/seedream-4.5/endpoints"
+        );
+        assert_eq!(
+            model_id_to_endpoints_path("openai/gpt-image-1"),
+            "/api/v1/images/models/openai/gpt-image-1/endpoints"
+        );
     }
 }

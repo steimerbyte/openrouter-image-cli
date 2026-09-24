@@ -30,9 +30,7 @@ pub fn resolve_output_paths(
     ext: &str,
 ) -> Vec<PathBuf> {
     if n == 1 {
-        vec![output.unwrap_or_else(|| {
-            default_output_dir().join(format!("output.{}", ext))
-        })]
+        vec![output.unwrap_or_else(|| default_output_dir().join(format!("output.{}", ext)))]
     } else if let Some(dir) = output_dir {
         (1..=u32::from(n))
             .map(|i| dir.join(format!("output-{}.{}", i, ext)))

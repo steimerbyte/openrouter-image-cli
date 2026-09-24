@@ -32,6 +32,18 @@ async fn test_client_402_exit_3() {
         output_paths: vec![PathBuf::from("/tmp/output.png")],
         n: 1,
         resolution: None,
+        aspect_ratio: None,
+        background: None,
+        output_format: None,
+        output_compression: None,
+        quality: None,
+        seed: None,
+        size: None,
+        user: None,
+        session_id: None,
+        provider: None,
+        trace: None,
+        stream: false,
         timeout_ms: 30_000,
     };
 
