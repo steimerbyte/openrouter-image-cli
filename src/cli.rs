@@ -114,13 +114,13 @@ pub struct Generate {
     #[arg(short = 'p', long = "prompt")]
     pub prompt: Option<String>,
 
-    /// Model slug (default: bytedance-seed/seedream-4.5). Discover current
+    /// Model slug (default: bytedance-seed/seedream-5-0-lite). Discover current
     /// options with `list-models`. Only models listed by the dedicated image
     /// endpoint (/api/v1/images/models) reliably support `resolution`.
     #[arg(
         short = 'm',
         long = "model",
-        default_value = "bytedance-seed/seedream-4.5"
+        default_value = "bytedance-seed/seedream-5-0-lite"
     )]
     pub model: String,
 
@@ -151,6 +151,20 @@ pub struct Generate {
     /// Stream progress as NDJSON events (default when --json is set).
     #[arg(long)]
     pub stream: bool,
+
+    /// Allow overwriting an existing output file. Default: false.
+    #[arg(long)]
+    pub clobber: bool,
+
+    /// Number of retries on empty API response (0..=3). Default: 0.
+    #[arg(long, default_value_t = 0u8, value_parser = clap::value_parser!(u8).range(0..=3))]
+    pub max_image_retries: u8,
+
+    /// Inline negative prompt — appended to --prompt with "Avoid: ..." prefix.
+    /// The OpenRouter Image API has no structured negative-prompt field for all
+    /// models; this is therefore merged into the prompt string before the API call.
+    #[arg(long = "negative-prompt", value_name = "TEXT")]
+    pub negative_prompt: Option<String>,
 
     /// Number of images to generate (1–10, default 1).
     #[arg(long, short = 'n', default_value_t = 1, value_parser = clap::value_parser!(u8).range(1..=10))]
@@ -313,6 +327,9 @@ impl Generate {
             trace_id: self.trace_id,
             trace_name: self.trace_name,
             span_name: self.span_name,
+            clobber: self.clobber,
+            max_image_retries: self.max_image_retries,
+            negative_prompt: self.negative_prompt.clone(),
         })
     }
 }
@@ -346,6 +363,9 @@ pub struct ValidatedGenerate {
     pub trace_id: Option<String>,
     pub trace_name: Option<String>,
     pub span_name: Option<String>,
+    pub clobber: bool,
+    pub max_image_retries: u8,
+    pub negative_prompt: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -509,5 +529,145 @@ mod tests {
         assert!(parse_size("x1024").is_err());
         assert!(parse_size("1024x").is_err());
         assert!(parse_size("1x2").is_err()); // too few digits
+    }
+
+    // -------------------------------------------------------------------------
+    // New flag tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn clobber_flag_parses_true() {
+        let cli = Cli::try_parse_from([
+            "openrouter-image",
+            "generate",
+            "--clobber",
+            "--prompt",
+            "a cat",
+            "--output",
+            "/tmp/test_clobber.png",
+        ])
+        .unwrap();
+        let gen = match cli.command {
+            Command::Generate(g) => g,
+            _ => unreachable!(),
+        };
+        let validated = gen.validate().unwrap();
+        assert!(validated.clobber);
+    }
+
+    #[test]
+    fn clobber_default_false() {
+        let cli = Cli::try_parse_from([
+            "openrouter-image",
+            "generate",
+            "--prompt",
+            "a cat",
+            "--output",
+            "/tmp/test_no_clobber.png",
+        ])
+        .unwrap();
+        let gen = match cli.command {
+            Command::Generate(g) => g,
+            _ => unreachable!(),
+        };
+        let validated = gen.validate().unwrap();
+        assert!(!validated.clobber);
+    }
+
+    #[test]
+    fn negative_prompt_parses() {
+        let cli = Cli::try_parse_from([
+            "openrouter-image",
+            "generate",
+            "--prompt",
+            "a cat",
+            "--negative-prompt",
+            "blurry, low quality",
+            "--output",
+            "/tmp/test_neg.png",
+        ])
+        .unwrap();
+        let gen = match cli.command {
+            Command::Generate(g) => g,
+            _ => unreachable!(),
+        };
+        let validated = gen.validate().unwrap();
+        assert_eq!(
+            validated.negative_prompt,
+            Some("blurry, low quality".to_string())
+        );
+    }
+
+    #[test]
+    fn negative_prompt_none_when_absent() {
+        let cli = Cli::try_parse_from([
+            "openrouter-image",
+            "generate",
+            "--prompt",
+            "a cat",
+            "--output",
+            "/tmp/test_no_neg.png",
+        ])
+        .unwrap();
+        let gen = match cli.command {
+            Command::Generate(g) => g,
+            _ => unreachable!(),
+        };
+        let validated = gen.validate().unwrap();
+        assert_eq!(validated.negative_prompt, None);
+    }
+
+    #[test]
+    fn max_image_retries_default_zero() {
+        let cli = Cli::try_parse_from([
+            "openrouter-image",
+            "generate",
+            "--prompt",
+            "a cat",
+            "--output",
+            "/tmp/test_retry.png",
+        ])
+        .unwrap();
+        let gen = match cli.command {
+            Command::Generate(g) => g,
+            _ => unreachable!(),
+        };
+        let validated = gen.validate().unwrap();
+        assert_eq!(validated.max_image_retries, 0);
+    }
+
+    #[test]
+    fn max_image_retries_range_ok() {
+        for n in [0u8, 1, 2, 3] {
+            let cli = Cli::try_parse_from([
+                "openrouter-image",
+                "generate",
+                "--prompt",
+                "a cat",
+                "--max-image-retries",
+                &n.to_string(),
+                "--output",
+                "/tmp/test_retry.png",
+            ])
+            .unwrap();
+            let gen = match cli.command {
+                Command::Generate(g) => g,
+                _ => unreachable!(),
+            };
+            let validated = gen.validate().unwrap();
+            assert_eq!(validated.max_image_retries, n, "value {n} should parse");
+        }
+        // 4 is out of range and must be rejected by clap
+        let result = Cli::try_parse_from([
+            "openrouter-image",
+            "generate",
+            "--prompt",
+            "a cat",
+            "--max-image-retries",
+            "4",
+            "--output",
+            "/tmp/test_retry.png",
+        ]);
+        assert!(result.is_err(), "--max-image-retries 4 should be rejected");
     }
 }

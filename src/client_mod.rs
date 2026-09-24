@@ -587,6 +587,9 @@ mod tests {
             trace: None,
             stream: false,
             timeout_ms: 120_000,
+            clobber: false,
+            max_image_retries: 0,
+            negative_prompt: None,
         }
     }
 

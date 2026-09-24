@@ -45,6 +45,9 @@ async fn test_client_401_exit_3() {
         trace: None,
         stream: false,
         timeout_ms: 30_000,
+        clobber: false,
+        max_image_retries: 0,
+        negative_prompt: None,
     };
 
     let config = openrouter_image_core::Config {

@@ -27,6 +27,9 @@ fn test_http_url_reference_passed_to_body() {
         trace: None,
         stream: false,
         timeout_ms: 120_000,
+        clobber: false,
+        max_image_retries: 0,
+        negative_prompt: None,
     };
 
     let body = params.to_request_body();
@@ -65,6 +68,9 @@ fn test_multiple_http_urls_passed_to_body() {
         trace: None,
         stream: false,
         timeout_ms: 120_000,
+        clobber: false,
+        max_image_retries: 0,
+        negative_prompt: None,
     };
 
     let body = params.to_request_body();

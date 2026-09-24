@@ -60,8 +60,51 @@ pub struct GenerationParams {
     /// Enable SSE streaming. When true, the API returns partial image chunks
     /// via SSE events.
     pub stream: bool,
+    /// Allow overwriting an existing output file. Default: false.
+    /// Only consumed in write_images(); not sent to the API body.
+    pub clobber: bool,
+    /// Number of additional attempts after the first when the API returns HTTP 200
+    /// but with no image data (empty `data` array). Default 0 (no retry).
+    /// Backoff is exponential: 1s, 2s, 4s. Each attempt re-issues the same request.
+    /// Only consumed by run_with_progress(); not sent to the API body.
+    pub max_image_retries: u8,
+    /// Inline negative prompt — appended to `prompt` as
+    /// `"\n\nAvoid: <text>"` before sending to the API.
+    /// The OpenRouter Image API has no structured `negative_prompt` field;
+    /// Seedream models and friends consume directives inline.
+    /// Only consumed by run_with_progress(); not sent to the API body.
+    pub negative_prompt: Option<String>,
     /// HTTP timeout in milliseconds.
     pub timeout_ms: u64,
+}
+
+impl Default for GenerationParams {
+    fn default() -> Self {
+        Self {
+            prompt: String::new(),
+            model: String::new(),
+            image_refs: Vec::new(),
+            output_paths: Vec::new(),
+            n: 1,
+            resolution: None,
+            aspect_ratio: None,
+            background: None,
+            output_format: None,
+            output_compression: None,
+            quality: None,
+            seed: None,
+            size: None,
+            user: None,
+            session_id: None,
+            provider: None,
+            trace: None,
+            stream: false,
+            clobber: false,
+            max_image_retries: 0,
+            negative_prompt: None,
+            timeout_ms: 120_000,
+        }
+    }
 }
 
 /// Provider routing preferences for the generation request.

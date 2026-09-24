@@ -29,6 +29,16 @@ pub enum ApiError {
     #[error("API error: {0}")]
     ApiResponse(crate::models_mod::ApiErrorBody),
 
+    /// The API returned HTTP 200 but the response body had no `data` field or
+    /// the field was an empty array. Carries model, last-known status, and a
+    /// truncated body excerpt for debugging.
+    #[error("empty response from `{model}` (status {status:?}, body: {body_excerpt:?})")]
+    EmptyResponse {
+        model: String,
+        status: Option<u16>,
+        body_excerpt: Option<String>,
+    },
+
     #[error("network error: {0}")]
     Network(#[from] reqwest::Error),
 }
@@ -74,6 +84,7 @@ impl ApiError {
                 _ => 4,
             },
             Self::ApiResponse(_) => 4,
+            Self::EmptyResponse { .. } => 4,
             Self::Network(_) => 5,
         }
     }

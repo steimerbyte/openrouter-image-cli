@@ -334,6 +334,9 @@ async fn generate_command(gen: cli::Generate) -> anyhow::Result<u8> {
             provider,
             trace,
             stream: validated.stream,
+            clobber: validated.clobber,
+            max_image_retries: validated.max_image_retries,
+            negative_prompt: validated.negative_prompt.clone(),
         };
         let body = params.to_request_body();
         eprintln!("[dry-run] Request body:");
@@ -369,6 +372,9 @@ async fn generate_command(gen: cli::Generate) -> anyhow::Result<u8> {
         provider,
         trace,
         stream: validated.stream,
+        clobber: validated.clobber,
+        max_image_retries: validated.max_image_retries,
+        negative_prompt: validated.negative_prompt.clone(),
     };
 
     let output_mode = if validated.json {

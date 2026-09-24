@@ -13,6 +13,12 @@ pub enum ProgressEvent {
     Progress { elapsed_ms: u64 },
     /// HTTP response status received.
     HttpStatus { status: u16 },
+    /// An empty-API-response retry was attempted.
+    RetryEmptyResponse {
+        attempt: u8,
+        max_attempts: u8,
+        delay_ms: u64,
+    },
     /// Retry attempt starting.
     RetryAttempt { attempt: u32, delay_ms: u64 },
     /// API error returned by OpenRouter.
