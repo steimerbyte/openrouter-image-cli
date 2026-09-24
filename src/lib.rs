@@ -8,6 +8,7 @@ mod error_mod;
 mod list_models;
 mod models_mod;
 mod output;
+mod paths_mod;
 mod progress_mod;
 mod reference_mod;
 
@@ -30,6 +31,7 @@ pub use error_mod::ReferenceError;
 pub use list_models::{fetch_image_models, is_image_model, ModelEntry, ModelsResponse};
 pub use models_mod::{ApiResponse, GenerationParams, OutputFormat};
 pub use output::OutputMode;
+pub use paths_mod::{default_output_dir, resolve_output_paths};
 pub use progress_mod::ProgressEvent;
 // Expose HttpClient for integration tests (uses new_with_url)
 pub use client_mod::HttpClient;

@@ -87,11 +87,11 @@ pub struct Generate {
     #[arg(long = "image-ref", value_name = "BASE64_DATA_URI")]
     pub image_refs: Vec<String>,
 
-    /// Single output file (default: ./output.png when n=1).
+    /// Single output file (default: ~/generated-images/output.png when n=1).
     #[arg(short = 'o', long = "output")]
     pub output: Option<PathBuf>,
 
-    /// Output directory for multiple images (n>1).
+    /// Output directory for multiple images (n>1). Default: ~/generated-images/.
     #[arg(long = "output-dir")]
     pub output_dir: Option<PathBuf>,
 
@@ -140,11 +140,11 @@ impl Generate {
                 .map_err(|e| CliError::invalid_arg(format!("--image-ref: {}", e)))?;
         }
 
-        let output_paths = resolve_output_paths(
+        let output_paths = openrouter_image_core::resolve_output_paths(
             self.n,
             self.output.clone(),
             self.output_dir.clone(),
-            self.output_format,
+            self.output_format.to_ext(),
         );
 
         Ok(ValidatedGenerate {
@@ -158,32 +158,6 @@ impl Generate {
             verbose: self.verbose,
             stream: self.stream,
         })
-    }
-}
-
-/// Resolved output paths based on --n, --output, --output-dir.
-///
-/// - n=1: single path from --output or ./output.png
-/// - n>1: output-{i}.png in --output-dir or current dir
-fn resolve_output_paths(
-    n: u8,
-    output: Option<PathBuf>,
-    output_dir: Option<PathBuf>,
-    format: OutputFormat,
-) -> Vec<PathBuf> {
-    let ext = format.to_ext();
-    if n == 1 {
-        vec![output.unwrap_or_else(|| PathBuf::from(format!("./output.{}", ext)))]
-    } else {
-        if let Some(dir) = output_dir {
-            (1..=u32::from(n))
-                .map(|i| dir.join(format!("output-{}.{}", i, ext)))
-                .collect()
-        } else {
-            (1..=u32::from(n))
-                .map(|i| PathBuf::from(format!("output-{}.{}", i, ext)))
-                .collect()
-        }
     }
 }
 

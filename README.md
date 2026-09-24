@@ -22,7 +22,7 @@ cargo install --path .
 # Configure API key
 export OPENROUTER_API_KEY=sk-or-v1-...
 
-# Generate one image (default: ./output.png)
+# Generate one image (default: ~/generated-images/output.png)
 openrouter-image generate --prompt "blue circle on white background"
 
 # Override output file
@@ -50,8 +50,8 @@ Options:
   -p, --prompt <PROMPT>                Image generation prompt (required)
   -m, --model <MODEL>                  Model slug (default: openai/gpt-image-2)
       --image-ref <BASE64_DATA_URI>    Base64-encoded data URI reference image (repeatable)
-  -o, --output <OUTPUT>                Single output file (default: ./output.png when n=1)
-      --output-dir <OUTPUT_DIR>        Output directory for multiple images (n>1)
+  -o, --output <OUTPUT>                Single output file (default: ~/generated-images/output.png)
+      --output-dir <OUTPUT_DIR>        Output directory for multiple images (n>1, default ~/generated-images/)
       --output-format <OUTPUT_FORMAT>  png | jpeg | webp | svg (default: png)
   -n, --n <N>                          Number of images (1–10, default 1)
       --json                           Structured JSON on stdout, NDJSON progress on stderr
@@ -132,8 +132,9 @@ Get a key at <https://openrouter.ai/keys>.
 
 ### Output
 
-- `n=1`: default `./output.png`, override with `-o <FILE>`
-- `n>1`: default current directory with `output-N.png`, override with `--output-dir <DIR>`
+- `n=1`: default `~/generated-images/output.png`, override with `-o <FILE>`
+- `n>1`: default `~/generated-images/output-N.png`, override with `--output-dir <DIR>`
+- Directory is created automatically (mkdir -p) on first run
 
 ## Development
 

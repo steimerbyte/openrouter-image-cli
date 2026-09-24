@@ -14,3 +14,8 @@ image-gen.json
 Cargo.lock
 *.swp
 *.swo
+
+# Test artefacts (live-generated images stay on disk under ~/generated-images)
+/test-output-*.png
+/_test-output/
+
