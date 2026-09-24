@@ -192,10 +192,7 @@ pub fn models_table(models: &[ModelEntry]) {
         env!("CARGO_PKG_VERSION")
     );
     println!();
-    println!(
-        "{:50} {:>15} {:>4} {:>4}",
-        "ID", "Resolution", "Str", "Out"
-    );
+    println!("{:50} {:>15} {:>4} {:>4}", "ID", "Resolution", "Str", "Out");
     println!("{}", "-".repeat(78));
     for m in models {
         let res = resolution_values(m)

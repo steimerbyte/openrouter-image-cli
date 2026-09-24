@@ -26,14 +26,14 @@ fn test_valid_data_uri_cases() {
 
 #[test]
 fn test_valid_http_https_url_cases() {
-    // HTTP(S) URLs are now accepted per OpenRouter spec
+    // HTTP(S) URLs are now accepted per OpenRouter spec — but only public hosts.
+    // Private/loopback/link-local IPs are rejected by the SSRF guard (F10).
+    // We use example.com's actual A record (93.184.216.34) to avoid DNS in tests.
     let cases = &[
-        "https://example.com/images/photo.png",
-        "http://example.com/images/photo.png",
-        "https://example.com:8080/images/photo.png",
-        "https://example.com/image.jpg?w=512&h=512",
-        "https://192.168.1.1/image.png",
-        "http://localhost:3000/image.png",
+        "https://93.184.216.34/images/photo.png",
+        "http://93.184.216.34/images/photo.png",
+        "https://93.184.216.34:8080/images/photo.png",
+        "https://93.184.216.34/image.jpg?w=512&h=512",
     ];
 
     for url in cases {

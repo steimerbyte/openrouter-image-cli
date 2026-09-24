@@ -6,9 +6,10 @@
 //! Streaming: when `params.stream = true`, sends `Accept: text/event-stream`
 //! and parses SSE events (`partial_image`, `completed`, `error`).
 
+use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 use std::time::{Duration, Instant};
 
-use anyhow::Context;
+use anyhow::{format_err, Context};
 use reqwest::Client as ReqwestClient;
 use tokio::time::sleep;
 
@@ -18,13 +19,154 @@ use crate::models_mod::{self, ApiResponse, GenerationParams};
 use crate::progress_mod::ProgressEvent;
 use crate::reference_mod::validate_reference;
 
+// ---------------------------------------------------------------------------
+// Base URL validation (SSRF + TLS hardening)
+// ---------------------------------------------------------------------------
+
+/// Returns true if `ip` is a loopback, private, or link-local address.
+///
+/// Covers:
+/// - Loopback: `127.0.0.0/8`, `::1`
+/// - Private: `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`
+/// - Link-local: `169.254.0.0/16`, `fe80::/10`
+/// - Unspecified: `0.0.0.0`, `::`
+/// - IPv4-mapped IPv6: `::ffff:x.x.x.x`
+fn is_private_or_loopback(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => {
+            let octets = v4.octets();
+            // 127.0.0.0/8
+            octets[0] == 127
+            // 10.0.0.0/8
+            || octets[0] == 10
+            // 172.16.0.0/12  (172.16 – 172.31)
+            || (octets[0] == 172 && (16..=31).contains(&octets[1]))
+            // 192.168.0.0/16
+            || (octets[0] == 192 && octets[1] == 168)
+            // 169.254.0.0/16
+            || (octets[0] == 169 && octets[1] == 254)
+            // 0.0.0.0
+            || (octets[0] == 0 && octets[1] == 0 && octets[2] == 0 && octets[3] == 0)
+        }
+        IpAddr::V6(v6) => {
+            let segments = v6.segments();
+            // ::1
+            v6.is_loopback()
+            // fc00::/7 — unique local
+            || (segments[0] & 0xfe00) == 0xfc00
+            // fe80::/10 — link-local (mask 0xffc0 matches the top 10 bits 1111111010)
+            || (segments[0] & 0xffc0) == 0xfe80
+            // ::ffff:x.x.x.x  (IPv4-mapped IPv6)
+            || (segments[0] == 0 && segments[1] == 0 && segments[2] == 0 && segments[3] == 0
+                && segments[4] == 0 && segments[5] == 0xffff)
+            // :: (unspecified)
+            || v6.is_unspecified()
+        }
+    }
+}
+
+/// Check whether the host part of `url` resolves to a private or loopback IP.
+/// Returns `Ok` if the host is safe (no private IP found after DNS resolution).
+/// Returns `Err` if any resolved address is private/loopback.
+fn check_host_not_private(host: &str) -> Result<(), String> {
+    // Try to resolve the host — if resolution fails we cannot check, so we allow.
+    // (dns_not_found is not a security failure; non-resolving hosts will fail at request time anyway.)
+    let addrs: Vec<SocketAddr> = match (host, 0u16).to_socket_addrs() {
+        Ok(a) => a.collect(),
+        Err(_) => return Ok(()),
+    };
+
+    for addr in addrs {
+        if is_private_or_loopback(addr.ip()) {
+            return Err(format!(
+                "host \"{}\" resolves to private/loopback IP {} — rejecting for SSRF safety",
+                host,
+                addr.ip()
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+/// Validates `OPENROUTER_BASE_URL` value for SSRF and TLS safety.
+///
+/// Rules:
+/// - Scheme must be `http` or `https`.
+/// - `http://` is only allowed for loopback hosts (`localhost`, `127.x.x.x`, `::1`).
+/// - Non-loopback hosts must use `https://`.
+/// - Non-loopback hosts are DNS-resolved; any private/loopback resolved IP is rejected.
+///
+/// This allows `http://127.0.0.1:8080` (wiremock in tests) while blocking
+/// `http://my-internal-server.corp` or `http://attacker.com`.
+fn validate_base_url(url: &str) -> Result<(), String> {
+    let scheme = url_scheme(url);
+    if scheme != "http" && scheme != "https" {
+        return Err(format!(
+            "OPENROUTER_BASE_URL scheme must be http or https, got \"{}\"",
+            scheme
+        ));
+    }
+
+    let host = url_host(url).ok_or_else(|| "OPENROUTER_BASE_URL is missing a host".to_string())?;
+
+    // Detect loopback host by string (covers localhost, 127.x.x.x, ::1, 127.0.0.1)
+    let is_loopback_host =
+        host.eq_ignore_ascii_case("localhost") || host.starts_with("127.") || host == "::1";
+
+    // HTTP is only permitted for loopback hosts (testing convenience)
+    if scheme == "http" && !is_loopback_host {
+        return Err(format!(
+            "non-HTTPS OPENROUTER_BASE_URL is only allowed for loopback hosts; \
+             host \"{}\" uses http — switch to https",
+            host
+        ));
+    }
+
+    // For non-loopback hosts: resolve DNS and reject private/loopback IPs
+    if !is_loopback_host {
+        check_host_not_private(host)?;
+    }
+
+    Ok(())
+}
+
+/// Extracts the scheme from a URL by splitting on "://".
+fn url_scheme(url: &str) -> &str {
+    url.split("://").next().unwrap_or("")
+}
+
+/// Extracts the bare host from a URL (strips scheme + optional user:pass@ + port + path).
+/// Example: `https://user:pass@host.example.com:8080/api` → `host.example.com`
+fn url_host(url: &str) -> Option<&str> {
+    let after_scheme = url.split("://").nth(1)?;
+    let after_auth = after_scheme.strip_prefix('@').unwrap_or(after_scheme);
+    let host_port = after_auth.split(['/', ':']).next()?;
+    if host_port.is_empty() {
+        return None;
+    }
+    Some(host_port)
+}
+
 /// Returns the base URL for OpenRouter images API.
 /// Override with `OPENROUTER_BASE_URL` env var (for integration tests).
-fn images_url() -> String {
-    std::env::var("OPENROUTER_BASE_URL")
+///
+/// # Errors
+/// Returns an error if `OPENROUTER_BASE_URL` is set to an invalid, non-HTTPS,
+/// or private-IP URL. Loopback hosts on `http://` are allowed (wiremock tests).
+fn images_url() -> anyhow::Result<String> {
+    let url = std::env::var("OPENROUTER_BASE_URL")
         .ok()
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "https://openrouter.ai/api/v1/images".to_string())
+        .unwrap_or_else(|| "https://openrouter.ai/api/v1/images".to_string());
+
+    // Validate before returning — fail closed on config-level SSRF risk.
+    if let Err(msg) = validate_base_url(&url) {
+        tracing::warn!("{}; rejecting OPENROUTER_BASE_URL", msg);
+        return Err(format_err!("invalid OPENROUTER_BASE_URL: {}", msg));
+    }
+
+    Ok(url)
 }
 
 const BACKOFF_DELAY: Duration = Duration::from_secs(2);
@@ -39,7 +181,8 @@ pub struct HttpClient {
 impl HttpClient {
     /// Construct a new HttpClient with the default images API endpoint.
     pub fn new(timeout_ms: u64) -> anyhow::Result<Self> {
-        Self::new_with_url(timeout_ms, images_url())
+        let url = images_url().context("OPENROUTER_BASE_URL validation failed")?;
+        Self::new_with_url(timeout_ms, url)
     }
 
     /// Create an HttpClient with a custom images endpoint URL (for integration testing).

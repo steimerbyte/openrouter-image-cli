@@ -23,6 +23,13 @@ default_model = "openai/gpt-image-2"
     )
     .unwrap();
 
+    // Set mode 0o600 — the resolver rejects world/group-readable configs (F1).
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&config_path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+
     // Patch the config path lookup by setting HOME to our temp dir
     // Note: dirs::config_dir() uses $XDG_CONFIG_HOME or $HOME/.config
     // We set XDG_CONFIG_HOME to the temp dir

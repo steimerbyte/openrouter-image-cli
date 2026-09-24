@@ -45,8 +45,8 @@ fn test_multiple_http_urls_passed_to_body() {
         prompt: "blend these images".to_string(),
         model: "openai/gpt-image-2".to_string(),
         image_refs: vec![
-            "https://cdn.example.com/photo1.png".to_string(),
-            "http://internal.local/photo2.jpg".to_string(),
+            "https://93.184.216.34/photo1.png".to_string(), // public IPv4 (example.com A)
+            "https://example.com/photo2.jpg".to_string(),   // public hostname
             "data:image/png;base64,ZXhhbXBsZQ==".to_string(),
         ],
         output_paths: vec![],
@@ -72,11 +72,11 @@ fn test_multiple_http_urls_passed_to_body() {
     assert_eq!(refs.len(), 3);
     assert_eq!(
         refs[0]["image_url"]["url"],
-        "https://cdn.example.com/photo1.png"
+        "https://93.184.216.34/photo1.png"
     );
     assert_eq!(
         refs[1]["image_url"]["url"],
-        "http://internal.local/photo2.jpg"
+        "https://example.com/photo2.jpg"
     );
     assert_eq!(
         refs[2]["image_url"]["url"],

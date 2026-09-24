@@ -13,7 +13,35 @@
 use std::fs;
 use std::path::PathBuf;
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
 use crate::error_mod::ConfigError;
+
+// ---------------------------------------------------------------------------
+// Permissions helper (Unix only)
+// ---------------------------------------------------------------------------
+
+/// Checks that `metadata` describes a file with mode 0o600 or stricter.
+/// On Unix this rejects group-readable (0o020) or world-readable (0o004) files.
+/// On non-Unix platforms this is a no-op (config file permissions are not
+/// meaningfully enforced).
+#[cfg(unix)]
+fn check_permissions_secure(metadata: &fs::Metadata) -> Result<u32, ConfigError> {
+    let mode = metadata.permissions().mode();
+    // Reject if any bits in the "others" or "group" triads are set.
+    // chmod 600 is mode 0o100600 on a regular file; we check only the lower 9 bits.
+    if mode & 0o077 != 0 {
+        return Err(ConfigError::InsecurePermissions(mode));
+    }
+    Ok(mode)
+}
+
+#[cfg(not(unix))]
+fn check_permissions_secure(_metadata: &fs::Metadata) -> Result<u32, ConfigError> {
+    // Windows / other platforms: no Unix permission model; allow.
+    Ok(0o600)
+}
 
 // ---------------------------------------------------------------------------
 // TOML config structure
@@ -77,6 +105,17 @@ impl Config {
         if !path.exists() {
             return Err(ConfigError::NotFound(path));
         }
+
+        // Security: reject symlinks (F2 — prevents symlink-target exfiltration).
+        // Use symlink_metadata so we inspect the link itself, not the target.
+        let meta =
+            fs::symlink_metadata(&path).map_err(|e| ConfigError::ReadError(e.to_string()))?;
+        if meta.file_type().is_symlink() {
+            return Err(ConfigError::ConfigIsSymlink);
+        }
+
+        // Security: reject world-readable or group-readable files (F1).
+        check_permissions_secure(&meta)?;
 
         let text = fs::read_to_string(&path).map_err(|e| ConfigError::ReadError(e.to_string()))?;
 

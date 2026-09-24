@@ -99,12 +99,23 @@ pub enum ConfigError {
 
     #[error("no API key found in config")]
     NoApiKey,
+
+    /// Config file is world-readable or group-readable (mode & 0o077 != 0).
+    /// User must `chmod 600` the file. Exit code 3 (auth/config).
+    #[error("config file has insecure permissions (mode {0:o}); chmod 600 required")]
+    InsecurePermissions(u32),
+
+    /// Config file is a symlink — refusing to follow for safety.
+    /// Exit code 3 (auth/config).
+    #[error("config file is a symlink; refusing to follow for safety")]
+    ConfigIsSymlink,
 }
 
 impl ConfigError {
     pub fn exit_code(&self) -> u8 {
         match self {
             Self::NoApiKey | Self::NotFound(_) => 3,
+            Self::InsecurePermissions(_) | Self::ConfigIsSymlink => 3,
             Self::NoHomeDir | Self::ReadError(_) | Self::ParseError(_) => 5,
         }
     }
@@ -125,5 +136,40 @@ pub enum ReferenceError {
 impl ReferenceError {
     pub fn exit_code(&self) -> u8 {
         2 // usage error — invalid argument format
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Path safety errors (F6, F7, F9)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Error)]
+pub enum PathError {
+    /// F6: resolved output path escapes allowed directories.
+    #[error(
+        "output path `{path}` resolves outside allowed directories \
+         (cwd, HOME, ~/generated-images)"
+    )]
+    Traversal { path: std::path::PathBuf },
+
+    /// F7: output path is a symlink; refusing to overwrite.
+    #[error("output path `{path}` is a symlink; refusing to overwrite")]
+    Symlink { path: std::path::PathBuf },
+
+    /// F9: output file already exists and no-clobber is enforced.
+    #[error(
+        "output file already exists: `{path}`; refusing to overwrite. \
+         Delete first or use --clobber"
+    )]
+    AlreadyExists { path: std::path::PathBuf },
+}
+
+impl PathError {
+    pub fn exit_code(&self) -> u8 {
+        match self {
+            Self::Traversal { .. } => 2,     // usage — bad output path
+            Self::Symlink { .. } => 5,       // IO — dangerous path
+            Self::AlreadyExists { .. } => 2, // usage — file exists
+        }
     }
 }

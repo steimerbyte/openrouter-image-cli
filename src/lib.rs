@@ -12,9 +12,10 @@ mod paths_mod;
 mod progress_mod;
 mod reference_mod;
 
+use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 
-use anyhow::Context;
+use anyhow::{bail, Context};
 use base64::Engine;
 use client_mod::HttpClient as Client;
 
@@ -27,6 +28,7 @@ use progress_mod::emit_progress_event;
 pub use config_mod::Config;
 pub use error_mod::ApiError;
 pub use error_mod::ConfigError;
+pub use error_mod::PathError;
 pub use error_mod::ReferenceError;
 pub use list_models::{
     fetch_image_models, fetch_model_endpoints, is_image_model, model_id_to_endpoints_path,
@@ -38,7 +40,7 @@ pub use models_mod::{
     PromptTokensDetails, ProviderRouting, TraceMetadata, Usage,
 };
 pub use output::OutputMode;
-pub use paths_mod::{default_output_dir, resolve_output_paths};
+pub use paths_mod::{default_output_dir, resolve_output_paths, validate_output_path};
 pub use progress_mod::ProgressEvent;
 // Expose HttpClient for integration tests (uses new_with_url)
 pub use client_mod::HttpClient;
@@ -131,6 +133,33 @@ async fn write_images(
             .cloned()
             .unwrap_or_else(|| PathBuf::from(format!("output-{}.png", idx + 1)));
 
+        // F6 — path traversal: validate output path is within allowed subtree.
+        // This check is advisory; canonicalize may fail if the parent dir does
+        // not exist yet (user is creating a new subdirectory — skip in that case).
+        if let Err(e) = paths_mod::validate_output_path(&path) {
+            if e.exit_code() == 2 {
+                eprintln!("{}: {}", env!("CARGO_PKG_NAME"), e);
+                std::process::exit(2);
+            }
+            bail!(e);
+        }
+
+        // F7 — symlink check: refuse to write through a symlink.
+        if let Ok(meta) = std::fs::symlink_metadata(&path) {
+            if meta.file_type().is_symlink() {
+                let err = error_mod::PathError::Symlink { path: path.clone() };
+                eprintln!("{}: {}", env!("CARGO_PKG_NAME"), err);
+                bail!(err);
+            }
+        }
+
+        // F9 — no-clobber: refuse to overwrite existing files.
+        if path.exists() {
+            let err = error_mod::PathError::AlreadyExists { path: path.clone() };
+            eprintln!("{}: {}", env!("CARGO_PKG_NAME"), err);
+            bail!(err);
+        }
+
         // Ensure parent dir exists
         if let Some(parent) = path.parent() {
             if !parent.as_os_str().is_empty() && parent != std::path::Path::new(".") {
@@ -142,6 +171,13 @@ async fn write_images(
 
         std::fs::write(&path, &buf)
             .with_context(|| format!("failed to write `{}`", path.display()))?;
+
+        // F8 — explicitly set restrictive permissions (owner-only read/write).
+        // Errors here are non-fatal — umask-set is best-effort hardening.
+        #[cfg(unix)]
+        {
+            let _ = std::fs::set_permissions(&path, PermissionsExt::from_mode(0o600));
+        }
 
         if let Some(mt) = &img.media_type {
             media_type.clone_from(mt);
