@@ -1,44 +1,110 @@
-//! API key resolution from env or config file.
+//! API key resolution from env or TOML config file.
+//!
+//! Config file: `~/.config/openrouter-image/config.toml` (XDG-conform via dirs::config_dir).
+//!
+//! Resolution order: OPENROUTER_API_KEY env > TOML file > error.
+//!
+//! TOML format:
+//! ```toml
+//! api_key = "sk-or-..."
+//! default_model = "openai/gpt-image-2"  # optional
+//! ```
 
 use std::fs;
 use std::path::PathBuf;
 
-use anyhow::Context;
-use serde::Deserialize;
+use crate::error_mod::ConfigError;
 
-/// Key-resolution configuration.
+// ---------------------------------------------------------------------------
+// TOML config structure
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, serde::Deserialize)]
+struct TomlConfig {
+    api_key: Option<String>,
+    default_model: Option<String>,
+}
+
+impl From<TomlConfig> for Config {
+    fn from(toml: TomlConfig) -> Self {
+        Self {
+            api_key: toml.api_key,
+            default_model: toml.default_model,
+            config_file: Self::config_path().unwrap_or_else(|| PathBuf::from("config.toml")),
+            config_file_exists: false,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Config
+// ---------------------------------------------------------------------------
+
+/// Configuration resolved from environment and/or config file.
 #[derive(Debug, Clone)]
 pub struct Config {
+    /// The resolved API key (always Some after resolve() succeeds).
     pub api_key: Option<String>,
+    /// Optional default model from config file.
+    pub default_model: Option<String>,
+    /// Path to the config file that was read (or the expected path).
     pub config_file: PathBuf,
+    /// Whether the config file actually existed.
+    pub config_file_exists: bool,
 }
 
 impl Config {
-    /// Resolve the API key: env var first, then `image-gen.json`.
-    pub fn resolve() -> anyhow::Result<Self> {
-        let config_file = Self::config_path();
+    /// Resolve config: env > TOML > ConfigError::NoApiKey.
+    pub fn resolve() -> Result<Self, ConfigError> {
+        // 1. Env wins
+        if let Ok(key) = std::env::var("OPENROUTER_API_KEY") {
+            let key = key.trim().to_string();
+            if !key.is_empty() {
+                let config_file =
+                    Self::config_path().unwrap_or_else(|| PathBuf::from("config.toml"));
+                return Ok(Self {
+                    api_key: Some(key),
+                    default_model: None,
+                    config_file,
+                    config_file_exists: false,
+                });
+            }
+        }
 
-        let from_env = std::env::var("OPENROUTER_API_KEY")
-            .ok()
+        // 2. TOML file
+        let path = Self::config_path().ok_or(ConfigError::NoHomeDir)?;
+
+        if !path.exists() {
+            return Err(ConfigError::NotFound(path));
+        }
+
+        let text = fs::read_to_string(&path).map_err(|e| ConfigError::ReadError(e.to_string()))?;
+
+        let text = text.trim();
+        if text.is_empty() {
+            return Err(ConfigError::NotFound(path));
+        }
+
+        let toml: TomlConfig =
+            toml::from_str(text).map_err(|e| ConfigError::ParseError(e.to_string()))?;
+
+        let api_key = toml
+            .api_key
             .map(|k| k.trim().to_string())
             .filter(|k| !k.is_empty());
 
-        if let Some(key) = from_env {
-            return Ok(Self {
+        match api_key {
+            Some(key) => Ok(Self {
                 api_key: Some(key),
-                config_file,
-            });
+                default_model: toml.default_model,
+                config_file: path,
+                config_file_exists: true,
+            }),
+            None => Err(ConfigError::NoApiKey),
         }
-
-        let from_file = Self::load_from_file(&config_file)?;
-
-        Ok(Self {
-            api_key: from_file,
-            config_file,
-        })
     }
 
-    /// Returns the resolved API key, if any.
+    /// Returns the resolved API key.
     pub fn api_key(&self) -> Option<&str> {
         self.api_key.as_deref()
     }
@@ -59,53 +125,8 @@ impl Config {
         self.config_file.clone()
     }
 
-    /// Path to the legacy config file (`~/.omp/agent/image-gen.json`).
-    pub fn legacy_config_path() -> PathBuf {
-        dirs::home_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join(".omp/agent/image-gen.json")
-    }
-
-    fn config_path() -> PathBuf {
-        Self::legacy_config_path()
-    }
-
-    fn load_from_file(path: &PathBuf) -> anyhow::Result<Option<String>> {
-        let raw = match fs::read_to_string(path) {
-            Ok(r) => r,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(e) => {
-                anyhow::bail!("failed to read {}: {}", path.display(), e);
-            }
-        };
-
-        let trimmed = raw.trim();
-        if trimmed.is_empty() {
-            return Ok(None);
-        }
-
-        #[derive(Deserialize)]
-        struct ImageGenSettings {
-            #[serde(rename = "apiKey")]
-            api_key: Option<String>,
-            #[serde(rename = "OPENROUTER_API_KEY")]
-            openrouter_api_key: Option<String>,
-            #[serde(rename = "openrouter_api_key")]
-            openrouter_api_key_snake: Option<String>,
-        }
-
-        let parsed: ImageGenSettings = serde_json::from_str(trimmed)
-            .with_context(|| format!("failed to parse {}", path.display()))?;
-
-        let key = parsed
-            .api_key
-            .or(parsed.openrouter_api_key)
-            .or(parsed.openrouter_api_key_snake)
-            .map(|k| k.trim().to_string())
-            .filter(|k| !k.is_empty());
-
-        Ok(key)
+    /// Returns the XDG config path (~/.config/openrouter-image/config.toml).
+    fn config_path() -> Option<PathBuf> {
+        dirs::config_dir().map(|p| p.join("openrouter-image").join("config.toml"))
     }
 }
-
-

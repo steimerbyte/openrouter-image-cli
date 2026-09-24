@@ -5,9 +5,12 @@ use std::path::PathBuf;
 use clap::Parser;
 use thiserror::Error;
 
-use openrouter_image_core::{AspectRatio, ImageModel, OutputFormat, Quality};
+use openrouter_image_core::OutputFormat;
 
-/// CLI error types that map to specific exit codes.
+// ---------------------------------------------------------------------------
+// CLI error
+// ---------------------------------------------------------------------------
+
 #[derive(Debug, Error)]
 #[error("{message}")]
 pub struct CliError {
@@ -18,7 +21,9 @@ pub struct CliError {
 impl CliError {
     pub fn no_api_key() -> Self {
         Self {
-            message: "OpenRouter API key not configured. Set OPENROUTER_API_KEY env var or write {\"apiKey\":\"sk-or-…\"} to ~/.omp/agent/image-gen.json (chmod 600).".to_string(),
+            message: "OpenRouter API key not configured. Set OPENROUTER_API_KEY env var \
+                      or write `api_key = \"sk-or-…\"` to ~/.config/openrouter-image/config.toml."
+                .to_string(),
             exit_code: 3,
         }
     }
@@ -35,23 +40,18 @@ impl CliError {
     }
 }
 
-/// Top-level CLI.
+// ---------------------------------------------------------------------------
+// Top-level CLI
+// ---------------------------------------------------------------------------
+
 #[derive(Debug, Parser)]
 #[command(
     name = "openrouter-image",
     version,
-    about = "Generate images via OpenRouter GPT Image models",
+    about = "Generate images via OpenRouter — GPT Image, DALL-E, Flux, Imagen, and more",
     long_about = None,
 )]
 pub struct Cli {
-    /// Structured JSON on stdout, NDJSON progress on stderr.
-    #[arg(long, short)]
-    pub json: bool,
-
-    /// Suppress all progress output (useful for agent loops).
-    #[arg(long, short)]
-    pub quiet: bool,
-
     #[command(subcommand)]
     pub command: Command,
 }
@@ -60,138 +60,177 @@ pub struct Cli {
 #[derive(Debug, Clone, Parser)]
 pub enum Command {
     /// Generate one or more images.
-    Gen(GenArgs),
-    /// List all known models.
-    Models,
+    Generate(Generate),
+    /// List all image-capable models (live from OpenRouter).
+    ListModels(ListModels),
     /// Show version and API key diagnostic.
     Info,
     /// Print the JSON result schema (for agent tooling).
     Schema,
 }
 
-/// Arguments for the `gen` subcommand.
+// ---------------------------------------------------------------------------
+// Generate subcommand
+// ---------------------------------------------------------------------------
+
 #[derive(Debug, Clone, Parser)]
-pub struct GenArgs {
-    /// Prompt text (required, or via --prompt-file with -).
-    #[arg(long = "prompt", short = 'p')]
+pub struct Generate {
+    /// Image generation prompt (required).
+    #[arg(short = 'p', long = "prompt")]
     pub prompt: Option<String>,
 
-    /// Read prompt from file (- for stdin).
-    #[arg(long = "prompt-file", value_name = "PATH")]
-    pub prompt_file: Option<String>,
+    /// Model slug (default: openai/gpt-image-2).
+    #[arg(short = 'm', long = "model", default_value = "openai/gpt-image-2")]
+    pub model: String,
 
-    /// Model slug.
-    #[arg(long, short = 'm', default_value = "openai/gpt-image-2")]
-    pub model: ImageModel,
+    /// Base64-encoded data URI reference image (repeatable).
+    #[arg(long = "image-ref", value_name = "BASE64_DATA_URI")]
+    pub image_refs: Vec<String>,
 
-    /// Reference image: local file path, data: URL, or https URL.
-    #[arg(long)]
-    pub reference: Option<String>,
+    /// Single output file (default: ./output.png when n=1).
+    #[arg(short = 'o', long = "output")]
+    pub output: Option<PathBuf>,
 
-    /// Aspect ratio.
-    #[arg(long, value_enum, default_value = "16:9")]
-    pub aspect_ratio: AspectRatio,
-
-    /// Quality preset.
-    #[arg(long, value_enum)]
-    pub quality: Option<Quality>,
-
-    /// Background mode.
-    #[arg(long)]
-    pub background: Option<String>,
-
-    /// Output format.
-    #[arg(long, value_enum, default_value = "png")]
-    pub output_format: OutputFormat,
-
-    /// Resolution preset.
-    #[arg(long)]
-    pub resolution: Option<String>,
-
-    /// Number of images to generate (1–10).
-    #[arg(long, short = 'n', default_value = "1")]
-    pub n: u32,
-
-    /// Random seed for reproducibility.
-    #[arg(long)]
-    pub seed: Option<u64>,
-
-    /// Output directory.
-    #[arg(long)]
+    /// Output directory for multiple images (n>1).
+    #[arg(long = "output-dir")]
     pub output_dir: Option<PathBuf>,
 
-    /// Timeout in milliseconds.
-    #[arg(long, default_value = "120000")]
-    pub timeout_ms: u64,
-
-    /// Disable automatic retry on 5xx errors.
+    /// Structured JSON on stdout, NDJSON progress on stderr.
     #[arg(long)]
-    pub no_retry: bool,
+    pub json: bool,
+
+    /// Print request body without calling API or writing files.
+    #[arg(long)]
+    pub dry_run: bool,
+
+    /// Verbose tracing output (stderr).
+    #[arg(long, short = 'v')]
+    pub verbose: bool,
+
+    /// Stream progress as NDJSON events (default when --json is set).
+    #[arg(long)]
+    pub stream: bool,
+
+    /// Number of images to generate (1–10, default 1).
+    #[arg(long, short = 'n', default_value_t = 1, value_parser = clap::value_parser!(u8).range(1..=10))]
+    pub n: u8,
+
+    /// Output format for saved images.
+    #[arg(long, value_enum, default_value = "png")]
+    pub output_format: OutputFormat,
 }
 
-impl GenArgs {
-    /// Convert CLI args into a `GenerationParams` for the library.
-    pub fn into_params(self) -> Result<openrouter_image_core::GenerationParams, CliError> {
-        let prompt = if let Some(p) = &self.prompt {
-            p.clone()
-        } else if let Some(pf) = &self.prompt_file {
-            if pf == "-" {
-                // Reading stdin from tty here would block; for --prompt-file -
-                // a real implementation would read from stdin before the async context.
-                // Fall back to empty — the actual stdin read happens in the caller.
-                return Err(CliError::invalid_arg(
-                    "stdin prompt not yet implemented — use --prompt or --prompt-file <path>",
-                ));
-            } else {
-                std::fs::read_to_string(pf)
-                    .map_err(|e| CliError::invalid_arg(format!("--prompt-file: {}", e)))?
-            }
-        } else {
-            return Err(CliError::invalid_arg(
-                "--prompt is required (or use --prompt-file - for stdin)",
-            ));
-        };
+impl Generate {
+    /// Validate arguments and resolve output paths.
+    pub fn validate(self) -> Result<ValidatedGenerate, CliError> {
+        let prompt = self
+            .prompt
+            .clone()
+            .ok_or_else(|| CliError::invalid_arg("--prompt is required"))?
+            .trim()
+            .to_string();
 
-        let prompt = prompt.trim().to_string();
         if prompt.is_empty() {
             return Err(CliError::invalid_arg("prompt must not be empty"));
         }
 
-        if self.n == 0 || self.n > 10 {
-            return Err(CliError::invalid_arg(format!(
-                "--n must be between 1 and 10, got {}",
-                self.n
-            )));
+        // Validate all image refs are valid data URIs
+        for ref_arg in &self.image_refs {
+            openrouter_image_core::validate_data_uri(ref_arg)
+                .map_err(|e| CliError::invalid_arg(format!("--image-ref: {}", e)))?;
         }
 
-        let output_dir = self.output_dir.unwrap_or_else(|| {
-            dirs::home_dir()
-                .unwrap_or_else(|| PathBuf::from("."))
-                .join("generated_images")
-        });
+        let output_paths = resolve_output_paths(
+            self.n,
+            self.output.clone(),
+            self.output_dir.clone(),
+            self.output_format,
+        );
 
-        Ok(openrouter_image_core::GenerationParams {
+        Ok(ValidatedGenerate {
             prompt,
             model: self.model,
-            reference: self.reference,
-            aspect_ratio: self.aspect_ratio,
-            quality: self.quality,
-            background: self.background,
-            output_format: self.output_format,
-            resolution: self.resolution,
+            image_refs: self.image_refs,
+            output_paths,
             n: self.n,
-            seed: self.seed,
-            output_dir,
-            timeout_ms: self.timeout_ms,
-            retry: !self.no_retry,
+            json: self.json,
+            dry_run: self.dry_run,
+            verbose: self.verbose,
+            stream: self.stream,
         })
     }
 }
 
-/// Parse CLI arguments from `std::env::args_os()`.
+/// Resolved output paths based on --n, --output, --output-dir.
+///
+/// - n=1: single path from --output or ./output.png
+/// - n>1: output-{i}.png in --output-dir or current dir
+fn resolve_output_paths(
+    n: u8,
+    output: Option<PathBuf>,
+    output_dir: Option<PathBuf>,
+    format: OutputFormat,
+) -> Vec<PathBuf> {
+    let ext = format.to_ext();
+    if n == 1 {
+        vec![output.unwrap_or_else(|| PathBuf::from(format!("./output.{}", ext)))]
+    } else {
+        if let Some(dir) = output_dir {
+            (1..=u32::from(n))
+                .map(|i| dir.join(format!("output-{}.{}", i, ext)))
+                .collect()
+        } else {
+            (1..=u32::from(n))
+                .map(|i| PathBuf::from(format!("output-{}.{}", i, ext)))
+                .collect()
+        }
+    }
+}
+
+/// Validated arguments ready for API call.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct ValidatedGenerate {
+    pub prompt: String,
+    pub model: String,
+    pub image_refs: Vec<String>,
+    pub output_paths: Vec<PathBuf>,
+    pub n: u8,
+    pub json: bool,
+    pub dry_run: bool,
+    pub verbose: bool,
+    pub stream: bool,
+}
+
+// ---------------------------------------------------------------------------
+// ListModels subcommand
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Parser)]
+pub struct ListModels {
+    /// Output raw JSON instead of a formatted table.
+    #[arg(long)]
+    pub json: bool,
+}
+
+// ---------------------------------------------------------------------------
+// Parse CLI
+// ---------------------------------------------------------------------------
+
 pub fn parse() -> Result<Cli, CliError> {
-    <Cli as clap::Parser>::try_parse().map_err(|e| CliError {
-        message: e.to_string(),
-        exit_code: 2,
-    })
+    use clap::error::ErrorKind;
+    match <Cli as clap::Parser>::try_parse() {
+        Ok(cli) => Ok(cli),
+        Err(e) => {
+            // --help and --version print to stdout and exit 0
+            if matches!(e.kind(), ErrorKind::DisplayHelp | ErrorKind::DisplayVersion) {
+                print!("{}", e);
+                std::process::exit(0);
+            }
+            Err(CliError {
+                message: e.to_string(),
+                exit_code: 2,
+            })
+        }
+    }
 }

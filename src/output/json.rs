@@ -5,6 +5,7 @@ use std::path::Path;
 use serde::Serialize;
 use serde_json::{json, Value};
 
+use crate::list_models::ModelEntry;
 use crate::GenerationResult;
 
 /// JSON result envelope written to stdout.
@@ -15,9 +16,9 @@ struct ResultEnvelope {
     images: Vec<ImageEntry>,
     usage: Option<UsageEntry>,
     model: String,
-    n: u32,
+    n: u8,
     elapsed_ms: u64,
-    output_dir: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     warnings: Vec<String>,
 }
 
@@ -67,7 +68,6 @@ pub fn final_result(result: &GenerationResult) {
         model: result.model.clone(),
         n: result.n,
         elapsed_ms: result.elapsed_ms,
-        output_dir: result.output_dir.display().to_string(),
         warnings: result.warnings.clone(),
     };
 
@@ -87,20 +87,43 @@ pub fn info(
         "key_masked": masked_key,
         "config_path": config_path.display().to_string(),
         "config_exists": config_exists,
-        "default_output_dir": "~/generated_images",
+        "config_lookup": "OPENROUTER_API_KEY env > ~/.config/openrouter-image/config.toml",
+        "default_output": "./output.png",
     });
     println!("{}", serde_json::to_string_pretty(&obj)?);
     Ok(())
 }
 
-/// Write the models list as JSON.
-pub fn models(model_list: &[&str]) {
+/// Write image models as a JSON array.
+pub fn models(models: &[ModelEntry]) {
     let obj = json!({
         "version": env!("CARGO_PKG_VERSION"),
-        "default": "openai/gpt-image-2",
-        "models": model_list,
+        "count": models.len(),
+        "models": models,
     });
     println!("{}", serde_json::to_string_pretty(&obj).unwrap());
+}
+
+/// Print image models as a human-readable table.
+pub fn models_table(models: &[ModelEntry]) {
+    println!(
+        "openrouter-image v{}  (live from openrouter.ai)",
+        env!("CARGO_PKG_VERSION")
+    );
+    println!();
+    println!("{:40} {:>10} Name", "ID", "Context");
+    println!("{}", "-".repeat(80));
+    for m in models {
+        let name = m.name.as_deref().unwrap_or("—");
+        let ctx = m
+            .context_length
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "—".to_string());
+        println!("{:40} {:>10} {}", m.id, ctx, name);
+    }
+    println!();
+    println!("Total: {} image-capable model(s)", models.len());
+    println!("Default: openai/gpt-image-2");
 }
 
 /// Return the JSON Schema for the result envelope.
@@ -110,7 +133,7 @@ pub fn schema() -> Value {
         "title": "openrouter-image result v1.0",
         "description": "Structured result emitted by openrouter-image --json on stdout.",
         "type": "object",
-        "required": ["schema_version", "status", "images", "model", "elapsed_ms", "output_dir"],
+        "required": ["schema_version", "status", "images", "model", "elapsed_ms"],
         "properties": {
             "schema_version": {
                 "type": "string",
@@ -148,7 +171,6 @@ pub fn schema() -> Value {
             "model": { "type": "string", "description": "Model slug used for generation." },
             "n": { "type": "integer", "description": "Number of images requested." },
             "elapsed_ms": { "type": "integer", "description": "Total wall-clock time in milliseconds." },
-            "output_dir": { "type": "string", "description": "Directory where images were saved." },
             "warnings": {
                 "type": "array",
                 "description": "Non-fatal issues (e.g. fewer images returned than requested).",

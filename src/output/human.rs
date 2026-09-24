@@ -20,21 +20,10 @@ pub fn info(key_status: &str, masked_key: &str, config_path: &Path, config_exist
         println!("  exists:  no — set OPENROUTER_API_KEY env var instead");
     }
     println!();
-    println!("Default output dir: ~/generated_images");
-    println!("  (override with --output-dir)");
-}
-
-/// Print `openrouter-image models` output.
-pub fn models(model_list: &[&str]) {
-    println!("openrouter-image v{}", env!("CARGO_PKG_VERSION"));
+    println!("Default output: ./output.png  (single) / ./output-N.png (multiple)");
+    println!("  override with: -o FILE or --output-dir DIR");
     println!();
-    println!("Supported models (hardcoded, no auto-discovery):");
-    println!();
-    for m in model_list {
-        println!("  {}", m);
-    }
-    println!();
-    println!("Default: openai/gpt-image-2");
+    println!("Config lookup: OPENROUTER_API_KEY env > ~/.config/openrouter-image/config.toml");
 }
 
 /// Print the final result after a successful generation.
@@ -64,7 +53,6 @@ pub fn final_result(result: &GenerationResult) {
             println!("   usage: {}", parts.join(", "));
         }
     }
-    println!("   output_dir: {}", result.output_dir.display());
     if !result.warnings.is_empty() {
         println!();
         for w in &result.warnings {

@@ -1,85 +1,84 @@
-//! Tests for reference image resolution.
-
-use std::io::Write;
-use tempfile::NamedTempFile;
+//! Tests for data-URI validation of image reference arguments.
 
 #[test]
-fn test_data_url_pass_through() {
-    let url = "data:image/png;base64,SGVsbG8=";
-    assert_eq!(
-        openrouter_image_core::resolve_reference(url).unwrap(),
-        url
-    );
+fn test_valid_png_data_uri() {
+    let uri = "data:image/png;base64,SGVsbG8=";
+    assert_eq!(openrouter_image_core::validate_data_uri(uri).unwrap(), uri);
 }
 
 #[test]
-fn test_https_pass_through() {
-    let url = "https://example.com/image.png";
-    assert_eq!(
-        openrouter_image_core::resolve_reference(url).unwrap(),
-        url
-    );
+fn test_valid_jpeg_data_uri() {
+    let uri = "data:image/jpeg;base64,/9j/4AAQ";
+    assert_eq!(openrouter_image_core::validate_data_uri(uri).unwrap(), uri);
 }
 
 #[test]
-fn test_http_pass_through() {
-    let url = "http://example.com/image.png";
-    assert_eq!(
-        openrouter_image_core::resolve_reference(url).unwrap(),
-        url
-    );
+fn test_valid_webp_data_uri() {
+    let uri = "data:image/webp;base64,UklGRlY=";
+    assert_eq!(openrouter_image_core::validate_data_uri(uri).unwrap(), uri);
 }
 
 #[test]
-fn test_local_file_png() {
-    let mut f = NamedTempFile::with_suffix(".png").unwrap();
-    f.write_all(b"fake png content").unwrap();
-    let path = f.path().to_str().unwrap();
-    let result = openrouter_image_core::resolve_reference(path).unwrap();
-    assert!(result.starts_with("data:image/png;base64,"));
+fn test_missing_data_prefix() {
+    let err =
+        openrouter_image_core::validate_data_uri("https://example.com/image.png").unwrap_err();
+    assert!(matches!(
+        err,
+        openrouter_image_core::ReferenceError::NotADataUri(_)
+    ));
 }
 
 #[test]
-fn test_local_file_jpeg() {
-    let mut f = NamedTempFile::with_suffix(".jpeg").unwrap();
-    f.write_all(b"fake jpeg").unwrap();
-    let result =
-        openrouter_image_core::resolve_reference(f.path().to_str().unwrap()).unwrap();
-    assert!(result.starts_with("data:image/jpeg;base64,"));
+fn test_missing_base64_marker() {
+    let err =
+        openrouter_image_core::validate_data_uri("data:image/png;binary,SGVsbG8=").unwrap_err();
+    assert!(matches!(
+        err,
+        openrouter_image_core::ReferenceError::NotBase64(_)
+    ));
 }
 
 #[test]
-fn test_local_file_webp() {
-    let mut f = NamedTempFile::with_suffix(".webp").unwrap();
-    f.write_all(b"fake webp").unwrap();
-    let result =
-        openrouter_image_core::resolve_reference(f.path().to_str().unwrap()).unwrap();
-    assert!(result.starts_with("data:image/webp;base64,"));
+fn test_missing_semicolon() {
+    let err = openrouter_image_core::validate_data_uri("datapng;base64,SGVsbG8=").unwrap_err();
+    assert!(matches!(
+        err,
+        openrouter_image_core::ReferenceError::NotADataUri(_)
+    ));
 }
 
 #[test]
-fn test_local_file_unknown_ext_defaults_png() {
-    let f = NamedTempFile::new().unwrap();
-    let result =
-        openrouter_image_core::resolve_reference(f.path().to_str().unwrap()).unwrap();
-    // Unknown extension defaults to image/png
-    assert!(result.starts_with("data:image/png;base64,"));
+fn test_empty_after_data() {
+    let err = openrouter_image_core::validate_data_uri("data:").unwrap_err();
+    assert!(matches!(
+        err,
+        openrouter_image_core::ReferenceError::Malformed(_)
+    ));
 }
 
 #[test]
-fn test_missing_file() {
-    let result = openrouter_image_core::resolve_reference("/nonexistent/path/file.png");
-    assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("not found"));
+fn test_only_data_prefix_no_semicolon() {
+    let err = openrouter_image_core::validate_data_uri("data:image/png").unwrap_err();
+    assert!(matches!(
+        err,
+        openrouter_image_core::ReferenceError::Malformed(_)
+    ));
 }
 
 #[test]
-fn test_base64_decoding_roundtrip() {
-    use base64::Engine;
-    let data = b"Hello, World!";
-    let encoded = base64::engine::general_purpose::STANDARD.encode(data);
-    let decoded = base64::engine::general_purpose::STANDARD
-        .decode(&encoded)
-        .unwrap();
-    assert_eq!(decoded, data);
+fn test_file_path_rejected() {
+    let err = openrouter_image_core::validate_data_uri("/home/user/image.png").unwrap_err();
+    assert!(matches!(
+        err,
+        openrouter_image_core::ReferenceError::NotADataUri(_)
+    ));
+}
+
+#[test]
+fn test_http_url_rejected() {
+    let err = openrouter_image_core::validate_data_uri("http://example.com/image.png").unwrap_err();
+    assert!(matches!(
+        err,
+        openrouter_image_core::ReferenceError::NotADataUri(_)
+    ));
 }

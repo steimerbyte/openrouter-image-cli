@@ -1,95 +1,108 @@
-//! Resolve a `--reference` argument to a data URL or pass-through HTTPS URLs.
+//! Strict data-URI validation for image reference arguments.
 //!
-//! Supports three forms:
-//!   - `data:image/…;base64,…` → passed through as-is
-//!   - `https://…`            → passed through as-is
-//!   - `/path/to/file`        → read, detect MIME, base64-encode
+//! Only `data:<media-type>;base64,<payload>` format is accepted.
+//! Local file paths and HTTP(S) URLs are NOT supported — use
+//! `--image-ref` only with pre-encoded base64 data URIs.
 
-use std::path::Path;
+use crate::error_mod::ReferenceError;
 
-use anyhow::Context;
-use base64::Engine;
+// ---------------------------------------------------------------------------
+// Data URI validation
+// ---------------------------------------------------------------------------
 
-/// Resolve a reference string to a data URL for the OpenRouter API.
-pub fn resolve_reference(input: &str) -> anyhow::Result<String> {
-    let input = input.trim();
-
-    // Already a data URL or https URL — pass through
-    if input.starts_with("data:") || input.starts_with("https://") || input.starts_with("http://") {
-        return Ok(input.to_string());
+/// Validate that a string is a well-formed data URI and return it on success.
+///
+/// Format: `data:<media-type>;base64,<payload>`
+///
+/// Returns the original string on success, or a `ReferenceError` on failure.
+pub fn validate_data_uri(s: &str) -> Result<&str, ReferenceError> {
+    if !s.starts_with("data:") {
+        return Err(ReferenceError::NotADataUri(s.to_string()));
     }
 
-    // Local file path
-    let path = Path::new(input);
-    if !path.exists() {
-        anyhow::bail!("reference file not found: {}", input);
+    // Everything after "data:"
+    let after = &s[5..];
+
+    let semi = after
+        .find(';')
+        .ok_or_else(|| ReferenceError::Malformed(s.to_string()))?;
+    let _media_type = &after[..semi]; // parsed but not used for validation
+    let rest = &after[semi + 1..];
+
+    if !rest.starts_with("base64,") {
+        return Err(ReferenceError::NotBase64(s.to_string()));
     }
 
-    let data = std::fs::read(path).with_context(|| format!("failed to read `{}`", input))?;
-
-    let mime = mime_by_ext(path);
-    let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
-
-    Ok(format!("data:{};base64,{}", mime, b64))
-}
-
-/// Detect MIME type from file extension.
-fn mime_by_ext(path: &Path) -> &'static str {
-    let ext = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(|e| e.to_lowercase());
-
-    match ext.as_deref() {
-        Some("png") => "image/png",
-        Some("jpg") | Some("jpeg") => "image/jpeg",
-        Some("gif") => "image/gif",
-        Some("webp") => "image/webp",
-        Some("svg") => "image/svg+xml",
-        Some("bmp") => "image/bmp",
-        Some("ico") => "image/x-icon",
-        _ => "image/png",
-    }
+    Ok(s)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
-    use tempfile::NamedTempFile;
 
     #[test]
-    fn test_data_url_pass_through() {
-        let url = "data:image/png;base64,SGVsbG8=";
-        assert_eq!(resolve_reference(url).unwrap(), url);
+    fn test_valid_png() {
+        let uri = "data:image/png;base64,SGVsbG8=";
+        assert_eq!(validate_data_uri(uri).unwrap(), uri);
     }
 
     #[test]
-    fn test_https_pass_through() {
-        let url = "https://example.com/image.png";
-        assert_eq!(resolve_reference(url).unwrap(), url);
+    fn test_valid_jpeg() {
+        let uri = "data:image/jpeg;base64,/9j/4AAQ";
+        assert_eq!(validate_data_uri(uri).unwrap(), uri);
     }
 
     #[test]
-    fn test_local_file() {
-        let mut f = NamedTempFile::with_suffix(".png").unwrap();
-        f.write_all(b"fake png data").unwrap();
-        let path = f.path().to_str().unwrap();
-        let result = resolve_reference(path).unwrap();
-        assert!(result.starts_with("data:image/png;base64,"));
+    fn test_valid_webp() {
+        let uri = "data:image/webp;base64,UklGRlY=";
+        assert_eq!(validate_data_uri(uri).unwrap(), uri);
     }
 
     #[test]
-    fn test_missing_file() {
-        let result = resolve_reference("/nonexistent/path/to/file.png");
-        assert!(result.is_err());
+    fn test_valid_with_long_payload() {
+        let uri = "data:image/png;base64,aGVsbG8gd29ybGQgaGVsbG8gd29ybGQ=";
+        assert_eq!(validate_data_uri(uri).unwrap(), uri);
     }
 
     #[test]
-    fn test_mime_detection() {
-        let mut f = NamedTempFile::with_suffix(".jpeg").unwrap();
-        f.write_all(b"fake").unwrap();
-        let result = resolve_reference(f.path().to_str().unwrap()).unwrap();
-        assert!(result.starts_with("data:image/jpeg;base64,"));
+    fn test_missing_data_prefix() {
+        let err = validate_data_uri("https://example.com/image.png").unwrap_err();
+        assert!(matches!(err, ReferenceError::NotADataUri(_)));
+    }
+
+    #[test]
+    fn test_missing_semi_colon() {
+        let err = validate_data_uri("datapng;base64,SGVsbG8=").unwrap_err();
+        assert!(matches!(err, ReferenceError::NotADataUri(_)));
+    }
+
+    #[test]
+    fn test_missing_base64_marker() {
+        let err = validate_data_uri("data:image/png;binary,SGVsbG8=").unwrap_err();
+        assert!(matches!(err, ReferenceError::NotBase64(_)));
+    }
+
+    #[test]
+    fn test_empty_after_data() {
+        let err = validate_data_uri("data:").unwrap_err();
+        assert!(matches!(err, ReferenceError::Malformed(_)));
+    }
+
+    #[test]
+    fn test_only_data_prefix() {
+        let err = validate_data_uri("data:image/png").unwrap_err();
+        assert!(matches!(err, ReferenceError::Malformed(_)));
+    }
+
+    #[test]
+    fn test_file_path_rejected() {
+        let err = validate_data_uri("/home/user/image.png").unwrap_err();
+        assert!(matches!(err, ReferenceError::NotADataUri(_)));
+    }
+
+    #[test]
+    fn test_http_url_rejected() {
+        let err = validate_data_uri("http://example.com/image.png").unwrap_err();
+        assert!(matches!(err, ReferenceError::NotADataUri(_)));
     }
 }

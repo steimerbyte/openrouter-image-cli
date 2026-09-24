@@ -39,6 +39,5 @@ pub fn emit_progress_event(event: ProgressEvent, mode: crate::output::OutputMode
         crate::output::OutputMode::Human => {
             // Human progress handled by indicatif in main.rs / run_with_progress
         }
-        crate::output::OutputMode::Quiet => {}
     }
 }

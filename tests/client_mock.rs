@@ -1,10 +1,6 @@
 //! Tests for API response parsing and error classification.
 
-use std::time::Duration;
-
-use openrouter_image_core::{
-    ApiError, ApiResponse, AspectRatio, Config, GenerationParams, ImageModel, OutputFormat, Quality,
-};
+use openrouter_image_core::{ApiError, ApiResponse, Config, GenerationParams, OutputFormat};
 
 #[test]
 fn test_success_response_parsing() {
@@ -127,6 +123,7 @@ fn test_api_error_from_status_402() {
 
 #[test]
 fn test_api_error_timeout_exit_code() {
+    use std::time::Duration;
     let err = ApiError::Timeout(Duration::from_secs(30));
     assert_eq!(err.exit_code(), 5);
 }
@@ -159,28 +156,17 @@ fn test_api_error_http_400_exit_code() {
 fn test_generation_params_to_request_body() {
     let params = GenerationParams {
         prompt: "test prompt".to_string(),
-        model: ImageModel::GptImage2,
-        reference: None,
-        aspect_ratio: AspectRatio::R16x9,
-        quality: Some(Quality::High),
-        background: None,
-        output_format: OutputFormat::Png,
-        resolution: None,
+        model: "openai/gpt-image-2".to_string(),
+        image_refs: vec![],
+        output_paths: vec![std::path::PathBuf::from("/tmp/output.png")],
         n: 2,
-        seed: Some(42),
-        output_dir: std::path::PathBuf::from("/tmp"),
         timeout_ms: 120_000,
-        retry: true,
     };
 
-    let body = params.to_request_body(None);
+    let body = params.to_request_body();
     assert_eq!(body["model"], "openai/gpt-image-2");
     assert_eq!(body["prompt"], "test prompt");
-    assert_eq!(body["aspect_ratio"], "16:9");
-    assert_eq!(body["quality"], "high");
-    assert_eq!(body["output_format"], "png");
     assert_eq!(body["n"], 2);
-    assert_eq!(body["seed"], 42);
     assert!(body.get("input_references").is_none());
 }
 
@@ -188,21 +174,14 @@ fn test_generation_params_to_request_body() {
 fn test_generation_params_with_reference() {
     let params = GenerationParams {
         prompt: "test".to_string(),
-        model: ImageModel::GptImage2,
-        reference: None,
-        aspect_ratio: AspectRatio::R1x1,
-        quality: None,
-        background: None,
-        output_format: OutputFormat::Png,
-        resolution: None,
+        model: "openai/gpt-image-2".to_string(),
+        image_refs: vec!["data:image/png;base64,abc".to_string()],
+        output_paths: vec![std::path::PathBuf::from("/tmp/output.png")],
         n: 1,
-        seed: None,
-        output_dir: std::path::PathBuf::from("/tmp"),
         timeout_ms: 120_000,
-        retry: true,
     };
 
-    let body = params.to_request_body(Some("data:image/png;base64,abc".to_string()));
+    let body = params.to_request_body();
     assert!(body.get("input_references").is_some());
     let refs = body["input_references"].as_array().unwrap();
     assert_eq!(refs.len(), 1);
@@ -213,17 +192,21 @@ fn test_generation_params_with_reference() {
 #[test]
 fn test_config_masked_key() {
     let cfg = Config {
-        api_key: Some("sk-or-v1-abcdef1234567890xyz".to_string()),
-        config_file: std::path::PathBuf::from("/tmp/test.json"),
+        api_key: Some("sk-or-v1-abcdefghijklmnopqrstuvwxyz012345".to_string()),
+        default_model: None,
+        config_file: std::path::PathBuf::from("/tmp/config.toml"),
+        config_file_exists: false,
     };
-    assert_eq!(cfg.masked_key(), "sk-or-v1…0xyz");
+    assert_eq!(cfg.masked_key(), "sk-or-v1…2345");
 }
 
 #[test]
 fn test_config_masked_key_short() {
     let cfg = Config {
         api_key: Some("short".to_string()),
-        config_file: std::path::PathBuf::from("/tmp/test.json"),
+        default_model: None,
+        config_file: std::path::PathBuf::from("/tmp/config.toml"),
+        config_file_exists: false,
     };
     assert_eq!(cfg.masked_key(), "sho…");
 }
@@ -232,7 +215,9 @@ fn test_config_masked_key_short() {
 fn test_config_masked_key_none() {
     let cfg = Config {
         api_key: None,
-        config_file: std::path::PathBuf::from("/tmp/test.json"),
+        default_model: None,
+        config_file: std::path::PathBuf::from("/tmp/config.toml"),
+        config_file_exists: false,
     };
     assert_eq!(cfg.masked_key(), "—");
 }
@@ -243,29 +228,4 @@ fn test_output_format_ext() {
     assert_eq!(OutputFormat::Jpeg.to_ext(), "jpg");
     assert_eq!(OutputFormat::Webp.to_ext(), "webp");
     assert_eq!(OutputFormat::Svg.to_ext(), "svg");
-}
-
-#[test]
-fn test_image_model_display() {
-    assert_eq!(ImageModel::GptImage2.to_string(), "openai/gpt-image-2");
-    assert_eq!(ImageModel::GptImage1.to_string(), "openai/gpt-image-1");
-    assert_eq!(ImageModel::GptImage1Mini.to_string(), "openai/gpt-image-1-mini");
-    assert_eq!(ImageModel::Gpt5Image.to_string(), "openai/gpt-5-image");
-    assert_eq!(ImageModel::Gpt5ImageMini.to_string(), "openai/gpt-5-image-mini");
-    assert_eq!(ImageModel::Gpt54Image2.to_string(), "openai/gpt-5.4-image-2");
-}
-
-#[test]
-fn test_aspect_ratio_display() {
-    assert_eq!(AspectRatio::R1x1.to_str(), "1:1");
-    assert_eq!(AspectRatio::R16x9.to_str(), "16:9");
-    assert_eq!(AspectRatio::R9x16.to_str(), "9:16");
-    assert_eq!(AspectRatio::Auto.to_str(), "auto");
-}
-
-#[test]
-fn test_quality_display() {
-    assert_eq!(Quality::Auto.to_str(), "auto");
-    assert_eq!(Quality::Low.to_str(), "low");
-    assert_eq!(Quality::High.to_str(), "high");
 }
