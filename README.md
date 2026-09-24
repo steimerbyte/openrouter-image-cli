@@ -206,6 +206,17 @@ Get a key at <https://openrouter.ai/keys>.
 - `n>1`: default `~/generated-images/output-N.png`, override with `--output-dir <DIR>`
 - Directory is created automatically (mkdir -p) on first run
 
+## Documentation
+
+| Document | Purpose |
+|---|---|
+| [`README.md`](./README.md) | This file — install, usage, command reference |
+| [`CHANGELOG.md`](./CHANGELOG.md) | Release notes per version (Keep a Changelog format) |
+| [`AUDIT-REPORT.md`](./AUDIT-REPORT.md) | Conformance audit against the OpenRouter Image API spec |
+| [`docs/PLAN-archive.md`](./docs/PLAN-archive.md) | Historical planning notes (pre-release, archived) |
+| [`examples/config.toml`](./examples/config.toml) | Example TOML configuration |
+| GitHub release notes | Per-release binaries + checksums: <https://github.com/steimerbyte/openrouter-image-cli/releases> |
+
 ## Development
 
 ```bash
@@ -216,12 +227,26 @@ cargo build --release
 ```
 
 Tests use `wiremock` for OpenRouter fixture mocking — no network required.
+A real `OPENROUTER_API_KEY` is only needed for manual smoke tests.
 
 Smoke test with a real key:
 
 ```bash
 OPENROUTER_API_KEY=sk-or-v1-... ./target/release/openrouter-image generate --prompt "red circle"
 ```
+
+## Architecture
+
+Two crates in one Cargo workspace:
+
+- **`openrouter_image_core`** (library, `src/lib.rs`) — API client, config,
+  validation, request/response types, progress events, path resolution.
+  Re-exported so consumers can embed the library without the CLI.
+- **`openrouter-image`** (binary, `src/main.rs`) — clap-driven CLI dispatch,
+  NDJSON output, error → exit-code mapping.
+
+The library is fully exercised by wiremock integration tests, so refactors
+stay safe.
 
 ## License
 
