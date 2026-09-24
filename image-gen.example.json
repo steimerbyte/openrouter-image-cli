@@ -1,5 +1,0 @@
-{
-  "apiKey": "sk-or-v1-REPLACE_ME",
-  "_doc": "Persistente OpenRouter-Konfiguration. chmod 600. apiKey wird automatisch gelesen, wenn OPENROUTER_API_KEY env-var fehlt.",
-  "_supportedKeys": ["apiKey", "OPENROUTER_API_KEY", "openrouter_api_key"]
-}

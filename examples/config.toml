@@ -1,0 +1,9 @@
+# Example configuration for openrouter-image.
+# Copy to ~/.config/openrouter-image/config.toml and edit.
+
+# Required: your OpenRouter API key (https://openrouter.ai/keys)
+api_key = "sk-or-v1-REPLACE_ME"
+
+# Optional: default model if --model is not passed on the CLI.
+# Falls back to "openai/gpt-image-2" when unset.
+# default_model = "openai/gpt-image-2"
