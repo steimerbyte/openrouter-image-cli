@@ -1,11 +1,15 @@
 //! Live model discovery from OpenRouter /api/v1/models.
 //!
-//! Filters for image-generation-capable models by ID pattern matching.
-//! The full filter list is documented in the CLI help text.
+//! Filter strategy: a model is image-capable when its `architecture.output_modalities`
+//! contains `"image"`. This is sourced directly from the API and is more reliable
+//! than keyword matching on the model id.
+//!
+//! The API response also exposes `supported_parameters` per model. When the list
+//! contains `"resolution"` (or `image_size`, etc.), the model supports the
+//! corresponding OpenRouter request field; clients can decide whether to send it.
 
 use reqwest::Client;
-use serde::Deserialize;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::error_mod::ApiError;
 
@@ -18,44 +22,62 @@ pub struct ModelsResponse {
     pub data: Vec<ModelEntry>,
 }
 
+/// Subset of an OpenRouter `models` entry we care about.
+///
+/// Fields are `Option` because OpenRouter returns them inconsistently across
+/// providers and we want forward compat.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ModelEntry {
     pub id: String,
+    #[serde(default)]
     pub name: Option<String>,
+    #[serde(default)]
     pub context_length: Option<usize>,
-    // pricing is a raw JSON value — kept as Value for forward compat
     #[serde(default)]
     pub pricing: Option<serde_json::Value>,
+    /// Per-model capability list, e.g. `["resolution", "tools", ...]`.
+    /// Used to detect resolution support when present.
+    #[serde(default)]
+    pub supported_parameters: Option<Vec<String>>,
+    #[serde(default)]
+    pub architecture: Option<Architecture>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct Architecture {
+    #[serde(default)]
+    pub modality: Option<String>,
+    #[serde(default)]
+    pub input_modalities: Vec<String>,
+    #[serde(default)]
+    pub output_modalities: Vec<String>,
 }
 
 // ---------------------------------------------------------------------------
-// Image-model filter
+// Image-model filter (API-driven)
 // ---------------------------------------------------------------------------
 
-/// Keywords that indicate a model supports image generation.
-/// All patterns are OR'd together.
-const IMAGE_KEYWORDS: &[&str] = &[
-    "image",
-    "dall",
-    "flux",
-    "sd-xl",
-    "imagen",
-    "gpt-image",
-    "gemini-2.0-flash-exp",
-    "gemini-2.5-pro",
-    "gemini-2.5-flash",
-    "gemini-3.0",
-    "seedream",
-    "reve",
-    "kandinsky",
-    "midjourney",
-    "playground-v2",
-];
+/// Returns true if the model advertises image output via `architecture.output_modalities`.
+pub fn is_image_model(model: &ModelEntry) -> bool {
+    model
+        .architecture
+        .as_ref()
+        .map(|a| a.output_modalities.iter().any(|m| m == "image"))
+        .unwrap_or(false)
+}
 
-/// Returns true if the model ID suggests image-generation capability.
-pub fn is_image_model(model_id: &str) -> bool {
-    let lower = model_id.to_lowercase();
-    IMAGE_KEYWORDS.iter().any(|kw| lower.contains(kw))
+/// Returns true if the model advertises a `resolution`-style parameter.
+pub fn supports_resolution(model: &ModelEntry) -> bool {
+    model
+        .supported_parameters
+        .as_ref()
+        .map(|params| {
+            params.iter().any(|p| {
+                let p = p.to_lowercase();
+                p == "resolution" || p == "image_size" || p.contains("resolution")
+            })
+        })
+        .unwrap_or(false)
 }
 
 // ---------------------------------------------------------------------------
@@ -105,7 +127,7 @@ pub async fn fetch_image_models(
     let image_models: Vec<ModelEntry> = models
         .data
         .into_iter()
-        .filter(|m| is_image_model(&m.id))
+        .filter(is_image_model)
         .collect();
 
     Ok(image_models)
@@ -115,31 +137,47 @@ pub async fn fetch_image_models(
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_image_filter_keywords() {
-        let cases = &[
-            ("openai/gpt-image-2", true),
-            ("openai/dall-e-3", true),
-            ("black-forest-labs/flux-1.1-pro", true),
-            ("google/imagen-3", true),
-            ("google/gemini-2.0-flash-exp", true),
-            ("stability-ai/sd-xl-1.0", true),
-            ("anthropic/claude-3.5-sonnet", false),
-            ("meta/llama-3.1-8b-instruct", false),
-            ("openai/gpt-4o", false),
-            ("mistral/mistral-large", false),
-            ("google/gemini-pro", false),
-            ("deepseek/deepseek-chat", false),
-        ];
-
-        for (id, expected) in cases {
-            assert_eq!(
-                is_image_model(id),
-                *expected,
-                "is_image_model({:?}) should be {}",
-                id,
-                expected
-            );
+    fn entry_with_output_modalities(om: &[&str]) -> ModelEntry {
+        ModelEntry {
+            id: "test/model".to_string(),
+            name: None,
+            context_length: None,
+            pricing: None,
+            supported_parameters: None,
+            architecture: Some(Architecture {
+                modality: None,
+                input_modalities: vec!["text".to_string()],
+                output_modalities: om.iter().map(|s| s.to_string()).collect(),
+            }),
         }
+    }
+
+    fn entry_with_params(params: &[&str]) -> ModelEntry {
+        ModelEntry {
+            id: "test/model".to_string(),
+            name: None,
+            context_length: None,
+            pricing: None,
+            supported_parameters: Some(params.iter().map(|s| s.to_string()).collect()),
+            architecture: None,
+        }
+    }
+
+    #[test]
+    fn is_image_model_detects_image_output_modality() {
+        assert!(is_image_model(&entry_with_output_modalities(&["image"])));
+        assert!(is_image_model(&entry_with_output_modalities(&["text", "image"])));
+        assert!(!is_image_model(&entry_with_output_modalities(&["text"])));
+        assert!(!is_image_model(&entry_with_output_modalities(&[])));
+    }
+
+    #[test]
+    fn supports_resolution_detects_resolution_param() {
+        assert!(supports_resolution(&entry_with_params(&["resolution"])));
+        assert!(supports_resolution(&entry_with_params(&["temperature", "resolution"])));
+        assert!(supports_resolution(&entry_with_params(&["image_resolution"])));
+        assert!(supports_resolution(&entry_with_params(&["image_size"])));
+        assert!(!supports_resolution(&entry_with_params(&["temperature", "tools"])));
+        assert!(!supports_resolution(&entry_with_params(&[])));
     }
 }

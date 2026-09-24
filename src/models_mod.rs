@@ -17,7 +17,7 @@ use serde::Deserialize;
 pub struct GenerationParams {
     /// Prompt text.
     pub prompt: String,
-    /// Model slug (e.g. "openai/gpt-image-2").
+    /// Model slug (e.g. "openai/gpt-5-image").
     pub model: String,
     /// Optional reference image data URIs.
     pub image_refs: Vec<String>,
@@ -25,6 +25,8 @@ pub struct GenerationParams {
     pub output_paths: Vec<PathBuf>,
     /// Number of images requested.
     pub n: u8,
+    /// Optional resolution preset: "512" | "1K" | "2K" | "4K".
+    pub resolution: Option<String>,
     /// HTTP timeout in milliseconds.
     pub timeout_ms: u64,
 }
@@ -58,6 +60,10 @@ impl GenerationParams {
                 })
                 .collect();
             body["input_references"] = serde_json::json!(refs);
+        }
+
+        if let Some(res) = &self.resolution {
+            body["resolution"] = serde_json::json!(res);
         }
 
         body

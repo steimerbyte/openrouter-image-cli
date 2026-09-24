@@ -40,6 +40,7 @@ async fn test_client_500_persistent_exit_4() {
         image_refs: vec![],
         output_paths: vec![PathBuf::from("/tmp/output.png")],
         n: 1,
+        resolution: None,
         timeout_ms: 30_000,
     };
 

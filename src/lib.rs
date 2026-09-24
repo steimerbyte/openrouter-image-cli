@@ -28,7 +28,7 @@ pub use config_mod::Config;
 pub use error_mod::ApiError;
 pub use error_mod::ConfigError;
 pub use error_mod::ReferenceError;
-pub use list_models::{fetch_image_models, is_image_model, ModelEntry, ModelsResponse};
+pub use list_models::{fetch_image_models, is_image_model, supports_resolution, Architecture, ModelEntry, ModelsResponse};
 pub use models_mod::{ApiResponse, GenerationParams, OutputFormat};
 pub use output::OutputMode;
 pub use paths_mod::{default_output_dir, resolve_output_paths};

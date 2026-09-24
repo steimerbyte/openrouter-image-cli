@@ -88,7 +88,7 @@ pub fn info(
         "config_path": config_path.display().to_string(),
         "config_exists": config_exists,
         "config_lookup": "OPENROUTER_API_KEY env > ~/.config/openrouter-image/config.toml",
-        "default_output": "./output.png",
+        "default_output": "~/generated-images/output.png",
     });
     println!("{}", serde_json::to_string_pretty(&obj)?);
     Ok(())
@@ -106,24 +106,32 @@ pub fn models(models: &[ModelEntry]) {
 
 /// Print image models as a human-readable table.
 pub fn models_table(models: &[ModelEntry]) {
+    use crate::list_models::{is_image_model, supports_resolution};
     println!(
         "openrouter-image v{}  (live from openrouter.ai)",
         env!("CARGO_PKG_VERSION")
     );
     println!();
-    println!("{:40} {:>10} Name", "ID", "Context");
+    println!(
+        "{:50} {:>10} {:>4} {:>4}",
+        "ID", "Context", "Res", "Out"
+    );
     println!("{}", "-".repeat(80));
     for m in models {
-        let name = m.name.as_deref().unwrap_or("—");
         let ctx = m
             .context_length
             .map(|c| c.to_string())
             .unwrap_or_else(|| "—".to_string());
-        println!("{:40} {:>10} {}", m.id, ctx, name);
+        let res = if supports_resolution(m) { "yes" } else { "—" };
+        let out = if is_image_model(m) { "img" } else { "—" };
+        println!("{:50} {:>10} {:>4} {:>4}", m.id, ctx, res, out);
     }
     println!();
     println!("Total: {} image-capable model(s)", models.len());
-    println!("Default: openai/gpt-image-2");
+    println!("Default: openai/gpt-5-image");
+    println!();
+    println!("Res = model lists 'resolution' (or image_size / *_resolution) in supported_parameters.");
+    println!("Out = architecture.output_modalities contains 'image'.");
 }
 
 /// Return the JSON Schema for the result envelope.

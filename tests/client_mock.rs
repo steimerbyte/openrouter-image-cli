@@ -160,6 +160,7 @@ fn test_generation_params_to_request_body() {
         image_refs: vec![],
         output_paths: vec![std::path::PathBuf::from("/tmp/output.png")],
         n: 2,
+        resolution: None,
         timeout_ms: 120_000,
     };
 
@@ -178,6 +179,7 @@ fn test_generation_params_with_reference() {
         image_refs: vec!["data:image/png;base64,abc".to_string()],
         output_paths: vec![std::path::PathBuf::from("/tmp/output.png")],
         n: 1,
+        resolution: None,
         timeout_ms: 120_000,
     };
 

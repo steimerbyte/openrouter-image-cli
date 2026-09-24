@@ -79,8 +79,9 @@ pub struct Generate {
     #[arg(short = 'p', long = "prompt")]
     pub prompt: Option<String>,
 
-    /// Model slug (default: openai/gpt-image-2).
-    #[arg(short = 'm', long = "model", default_value = "openai/gpt-image-2")]
+    /// Model slug (default: openai/gpt-5-image). Discover current options
+    /// with `list-models` — the default reflects the latest live OpenRouter image model.
+    #[arg(short = 'm', long = "model", default_value = "openai/gpt-5-image")]
     pub model: String,
 
     /// Base64-encoded data URI reference image (repeatable).
@@ -118,6 +119,11 @@ pub struct Generate {
     /// Output format for saved images.
     #[arg(long, value_enum, default_value = "png")]
     pub output_format: OutputFormat,
+
+    /// Resolution preset for models that support it: 512 | 1K | 2K | 4K.
+    /// Pass-through to the OpenRouter API. Not all models honour every value.
+    #[arg(long, value_parser = ["512", "1K", "2K", "4K"])]
+    pub resolution: Option<String>,
 }
 
 impl Generate {
@@ -153,6 +159,7 @@ impl Generate {
             image_refs: self.image_refs,
             output_paths,
             n: self.n,
+            resolution: self.resolution.clone(),
             json: self.json,
             dry_run: self.dry_run,
             verbose: self.verbose,
@@ -170,6 +177,7 @@ pub struct ValidatedGenerate {
     pub image_refs: Vec<String>,
     pub output_paths: Vec<PathBuf>,
     pub n: u8,
+    pub resolution: Option<String>,
     pub json: bool,
     pub dry_run: bool,
     pub verbose: bool,

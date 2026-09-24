@@ -7,7 +7,7 @@
 //! TOML format:
 //! ```toml
 //! api_key = "sk-or-..."
-//! default_model = "openai/gpt-image-2"  # optional
+//! default_model = "openai/gpt-5-image"  # optional
 //! ```
 
 use std::fs;

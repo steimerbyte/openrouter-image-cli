@@ -56,6 +56,7 @@ async fn test_client_200_single_response_parsing() {
         image_refs: vec![],
         output_paths: vec![output_path.clone()],
         n: 1,
+        resolution: None,
         timeout_ms: 30_000,
     };
 

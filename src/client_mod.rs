@@ -207,6 +207,10 @@ fn build_request_body(params: &GenerationParams, ref_urls: &[&str]) -> serde_jso
         body["input_references"] = serde_json::json!(refs);
     }
 
+    if let Some(res) = &params.resolution {
+        body["resolution"] = serde_json::json!(res);
+    }
+
     body
 }
 
@@ -233,6 +237,7 @@ mod tests {
             image_refs: vec![],
             output_paths: vec![std::path::PathBuf::from("./output.png")],
             n: 1,
+            resolution: None,
             timeout_ms: 120_000,
         }
     }
@@ -264,6 +269,14 @@ mod tests {
         params.n = 3;
         let body = build_request_body(&params, &[]);
         assert_eq!(body["n"], 3);
+    }
+
+    #[test]
+    fn test_build_request_body_with_resolution() {
+        let mut params = test_params();
+        params.resolution = Some("2K".to_string());
+        let body = build_request_body(&params, &[]);
+        assert_eq!(body["resolution"], "2K");
     }
 
     #[test]

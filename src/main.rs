@@ -201,6 +201,7 @@ async fn generate_command(gen: cli::Generate) -> anyhow::Result<u8> {
             image_refs: validated.image_refs.clone(),
             output_paths: validated.output_paths.clone(),
             n: validated.n,
+            resolution: validated.resolution.clone(),
             timeout_ms: 120_000,
         };
         let body = params.to_request_body();
@@ -222,6 +223,7 @@ async fn generate_command(gen: cli::Generate) -> anyhow::Result<u8> {
         image_refs: validated.image_refs,
         output_paths: validated.output_paths,
         n: validated.n,
+        resolution: validated.resolution,
         timeout_ms: 120_000,
     };
 

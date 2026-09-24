@@ -48,11 +48,15 @@ openrouter-image generate [OPTIONS]
 
 Options:
   -p, --prompt <PROMPT>                Image generation prompt (required)
-  -m, --model <MODEL>                  Model slug (default: openai/gpt-image-2)
+  -m, --model <MODEL>                  Model slug (default: openai/gpt-5-image)
       --image-ref <BASE64_DATA_URI>    Base64-encoded data URI reference image (repeatable)
   -o, --output <OUTPUT>                Single output file (default: ~/generated-images/output.png)
       --output-dir <OUTPUT_DIR>        Output directory for multiple images (n>1, default ~/generated-images/)
       --output-format <OUTPUT_FORMAT>  png | jpeg | webp | svg (default: png)
+      --resolution <RESOLUTION>        Resolution preset (512 | 1K | 2K | 4K). Pass-through to the
+                                       API; only effective for models that list 'resolution' in
+                                       supported_parameters. Use `list-models` to discover which
+                                       models advertise it.
   -n, --n <N>                          Number of images (1–10, default 1)
       --json                           Structured JSON on stdout, NDJSON progress on stderr
       --dry-run                        Print request body without calling API or writing files
@@ -75,11 +79,13 @@ File paths and HTTP(S) URLs are intentionally not accepted — convert to a data
 
 ## `list-models` subcommand
 
-Live fetch from `https://openrouter.ai/api/v1/models`, filtered to image-generation-capable providers. Filter keywords: `image`, `dall`, `flux`, `sd-xl`, `imagen`, `gpt-image`, `gemini-2.0-flash-exp`, `gemini-2.5-*`, `gemini-3.0`, `seedream`, `reve`, `kandinsky`, `midjourney`, `playground-v2`.
+Live fetch from `https://openrouter.ai/api/v1/models`, filtered to image-generation-capable providers. A model is considered image-capable when its `architecture.output_modalities` contains `"image"` — this is sourced directly from the API, not from name matching.
+
+The `Res` column shows whether the model advertises `resolution` (or `image_size` / `*_resolution`) in `supported_parameters`. Models without that entry accept `--resolution` as a pass-through but ignore it.
 
 ```bash
-openrouter-image list-models           # human-readable table
-openrouter-image list-models --json    # raw JSON array
+openrouter-image list-models           # human-readable table with Context / Res / Out columns
+openrouter-image list-models --json    # raw JSON array of ModelEntry objects
 ```
 
 ## Agent tooling
@@ -118,7 +124,7 @@ Prints the JSON Schema of the result envelope. Fetch once and parse to understan
 
 ```toml
 api_key = "sk-or-v1-..."
-default_model = "openai/gpt-image-2"  # optional
+default_model = "openai/gpt-5-image"  # optional
 ```
 
 ```bash
