@@ -5,6 +5,46 @@ All notable changes to `openrouter-image-cli` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] — 2026-09-24
+
+### Security
+
+- **F1 (HIGH) — Config file permission check**: refuses to read
+  `~/.config/openrouter-image/config.toml` if it is group- or world-readable
+  (`mode & 0o077 != 0`). Run `chmod 600 <file>` to fix.
+- **F2 (HIGH) — Config file symlink check**: refuses to follow symlinks at the
+  config path. Prevents an attacker on a shared host from pointing the config
+  at a file they control.
+- **F6 (MED) — Output path validation**: `-o` and `--output-dir` paths must
+  canonicalize inside `cwd`, `$HOME`, or `$HOME/generated-images`. Path traversal
+  (`-o ../../etc/...`) is rejected.
+- **F7 (MED) — Output symlink refusal**: refuses to write through a symlink at
+  the destination, preventing redirect-write attacks.
+- **F10/F11 (MED) — SSRF guard on `--image-ref` HTTP(S) URLs**: validates the
+  resolved IP against private/loopback/link-local/cloud-metadata ranges
+  (`10/8`, `172.16/12`, `192.168/16`, `169.254/16`, `127/8`, `0/8`,
+  `fc00::/7`, `fe80::/10`, IPv4-mapped IPv6 inner). Blocks
+  `http://169.254.169.254/...` (AWS metadata), `http://127.0.0.1`, etc.
+- **F13 (MED) — `OPENROUTER_BASE_URL` hardening**: requires `https://` for
+  non-loopback hosts; DNS-resolves and rejects private IPs. Loopback +
+  `http://` allowed for wiremock-style test setups.
+
+### Documentation
+
+- New [`SECURITY-AUDIT.md`](./SECURITY-AUDIT.md): 12-category static security
+  audit, 16 findings total (2 HIGH, 6 MED, 5 LOW, 3 INFO), 9 fixed in this
+  release.
+- `README.md`: new **Security** section summarising the audit and the accepted
+  findings (key in memory, umask inheritance, no-clobber, dep CVEs).
+
+### Notes
+
+- The audit subagent (`security-reviewer`) and the audit + fix workflow
+  (`sec-skill`) are reusable artefacts stored under `~/.pi/agent/` for future
+  audits.
+- No breaking CLI changes; all new behaviour is opt-out via env vars or hard
+  defaults that match the safer choice.
+
 ## [0.1.0] — 2026-09-24
 
 ### Added

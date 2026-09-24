@@ -1,6 +1,11 @@
 # openrouter-image
 
+[![release](https://img.shields.io/badge/release-v0.1.1-blue)](https://github.com/steimerbyte/openrouter-image-cli/releases/tag/v0.1.1)
+[![license](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
+
 Standalone Rust CLI for generating images via OpenRouter. Agent-steerable: `--json` mode emits structured results on stdout and NDJSON progress on stderr, exit codes are stable, making it safe to drive from an LLM loop, CI pipeline, or shell script.
+
+> Latest release: [v0.1.1](https://github.com/steimerbyte/openrouter-image-cli/releases/tag/v0.1.1). See [`CHANGELOG.md`](./CHANGELOG.md) for release notes, [`AUDIT-REPORT.md`](./AUDIT-REPORT.md) for the OpenRouter API conformance audit, and [`SECURITY-AUDIT.md`](./SECURITY-AUDIT.md) for the security audit findings.
 
 ## Features
 
@@ -205,6 +210,42 @@ Get a key at <https://openrouter.ai/keys>.
 - `n=1`: default `~/generated-images/output.png`, override with `-o <FILE>`
 - `n>1`: default `~/generated-images/output-N.png`, override with `--output-dir <DIR>`
 - Directory is created automatically (mkdir -p) on first run
+- Output paths must canonicalise inside `cwd`, `$HOME`, or
+  `$HOME/generated-images`; symlinks are not followed (defense in depth)
+
+## Security
+
+The CLI is designed to be safe to drive from agent loops and CI. Recent
+hardening is documented in [`SECURITY-AUDIT.md`](./SECURITY-AUDIT.md);
+key invariants:
+
+- **API key is never in the request body.** It travels only in the
+  `Authorization: Bearer` header. `--dry-run` prints the body without the key.
+- **Config file must be `chmod 600`.** If `~/.config/openrouter-image/config.toml`
+  is group- or world-readable, the CLI refuses to read it (exit code 3). Run
+  `chmod 600 ~/.config/openrouter-image/config.toml` to fix.
+- **Symlinks at the config path are rejected** — prevents an attacker on a
+  shared host from pointing the config at a file they control.
+- **SSRF guard on `--image-ref` HTTP(S) URLs.** Resolves the host and rejects
+  private/loopback/link-local/cloud-metadata IPs (`10/8`, `172.16/12`,
+  `192.168/16`, `169.254/16`, `127/8`, `0/8`, `fc00::/7`, `fe80::/10`,
+  IPv4-mapped IPv6). Blocks `http://169.254.169.254/...` (AWS metadata) and
+  `http://localhost/...`. Public URLs pass.
+- **`OPENROUTER_BASE_URL` is validated.** Non-loopback hosts require `https://`
+  and must not DNS-resolve to a private IP. Loopback + `http://` is allowed
+  for wiremock-style test setups.
+- **Output path traversal is rejected.** `-o` and `--output-dir` must stay
+  inside `cwd`, `$HOME`, or `$HOME/generated-images`. Symlinks at the
+  destination are not followed.
+
+### Accepted findings (with rationale)
+
+| Finding | Severity | Rationale |
+|---|---|---|
+| API key lives in process memory as `String` | LOW | No zeroize crate added; keep processes short-lived. Not exploitable without a memory dump. |
+| Output files inherit umask | LOW | Defense-in-depth; trivial for the user to fix with `umask 077`. |
+| Same-process concurrent runs may overwrite `output.png` | LOW | Rare in practice; auto-rename would break predictable output paths. |
+| Dep CVEs (transitive `icu_*`) | LOW | Pinned to last rustc-1.85-compatible versions; will refresh when the CI matrix gains rustc 1.88+. |
 
 ## Documentation
 
@@ -213,6 +254,7 @@ Get a key at <https://openrouter.ai/keys>.
 | [`README.md`](./README.md) | This file — install, usage, command reference |
 | [`CHANGELOG.md`](./CHANGELOG.md) | Release notes per version (Keep a Changelog format) |
 | [`AUDIT-REPORT.md`](./AUDIT-REPORT.md) | Conformance audit against the OpenRouter Image API spec |
+| [`SECURITY-AUDIT.md`](./SECURITY-AUDIT.md) | Security audit findings (12 categories, severity-graded) |
 | [`docs/PLAN-archive.md`](./docs/PLAN-archive.md) | Historical planning notes (pre-release, archived) |
 | [`examples/config.toml`](./examples/config.toml) | Example TOML configuration |
 | GitHub release notes | Per-release binaries + checksums: <https://github.com/steimerbyte/openrouter-image-cli/releases> |
