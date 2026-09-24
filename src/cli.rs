@@ -79,9 +79,10 @@ pub struct Generate {
     #[arg(short = 'p', long = "prompt")]
     pub prompt: Option<String>,
 
-    /// Model slug (default: openai/gpt-5-image). Discover current options
-    /// with `list-models` — the default reflects the latest live OpenRouter image model.
-    #[arg(short = 'm', long = "model", default_value = "openai/gpt-5-image")]
+    /// Model slug (default: bytedance-seed/seedream-4.5). Discover current
+    /// options with `list-models`. Only models listed by the dedicated image
+    /// endpoint (/api/v1/images/models) reliably support `resolution`.
+    #[arg(short = 'm', long = "model", default_value = "bytedance-seed/seedream-4.5")]
     pub model: String,
 
     /// Base64-encoded data URI reference image (repeatable).
@@ -121,9 +122,10 @@ pub struct Generate {
     pub output_format: OutputFormat,
 
     /// Resolution preset for models that support it: 512 | 1K | 2K | 4K.
-    /// Pass-through to the OpenRouter API. Not all models honour every value.
-    #[arg(long, value_parser = ["512", "1K", "2K", "4K"])]
-    pub resolution: Option<String>,
+    /// Default: 2K (per OpenRouter docs, 2K is the API's mandated default).
+    /// Use `list-models` to discover which values a given model actually honours.
+    #[arg(long, value_parser = ["512", "1K", "2K", "4K"], default_value = "2K")]
+    pub resolution: String,
 }
 
 impl Generate {
@@ -177,7 +179,7 @@ pub struct ValidatedGenerate {
     pub image_refs: Vec<String>,
     pub output_paths: Vec<PathBuf>,
     pub n: u8,
-    pub resolution: Option<String>,
+    pub resolution: String,
     pub json: bool,
     pub dry_run: bool,
     pub verbose: bool,

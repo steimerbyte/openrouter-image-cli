@@ -7,7 +7,7 @@
 //! TOML format:
 //! ```toml
 //! api_key = "sk-or-..."
-//! default_model = "openai/gpt-5-image"  # optional
+//! default_model = "bytedance-seed/seedream-4.5"  # optional
 //! ```
 
 use std::fs;

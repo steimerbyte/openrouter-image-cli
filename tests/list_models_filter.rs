@@ -1,79 +1,78 @@
 //! Integration test: list_models filter correctness.
 //!
-//! Uses the real `architecture.output_modalities` + `supported_parameters`
-//! shape that OpenRouter returns. Filtering is API-driven, not keyword-based.
+//! Mocks the dedicated `/api/v1/images/models` endpoint. The new shape uses
+//! `supported_parameters` as a map keyed by parameter name, with values
+//! being `{type, values, min, max}` objects.
 
+use std::collections::BTreeMap;
 use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
+
+fn param_enum(values: &[&str]) -> openrouter_image_core::ParamSpec {
+    openrouter_image_core::ParamSpec {
+        kind: "enum".to_string(),
+        values: values.iter().map(|s| s.to_string()).collect(),
+        min: None,
+        max: None,
+    }
+}
+
+fn make_entry_json(
+    id: &str,
+    output_modalities: &[&str],
+    sp: BTreeMap<String, openrouter_image_core::ParamSpec>,
+) -> serde_json::Value {
+    serde_json::json!({
+        "id": id,
+        "name": id,
+        "architecture": {
+            "input_modalities": ["text"],
+            "output_modalities": output_modalities
+        },
+        "supported_parameters": sp.into_iter().map(|(k, v)| {
+            (k, serde_json::json!({"type": v.kind, "values": v.values}))
+        }).collect::<serde_json::Map<_, _>>()
+    })
+}
 
 #[tokio::test]
 async fn test_list_models_filter() {
     let mock_server = MockServer::start().await;
 
-    let all_models_response = serde_json::json!({
-        "data": [
-            {
-                "id": "openai/gpt-5-image",
-                "name": "OpenAI: GPT-5 Image",
-                "context_length": 400000,
-                "supported_parameters": ["temperature", "seed", "resolution"],
-                "architecture": {
-                    "modality": "text+image+file->text+image",
-                    "input_modalities": ["text", "image", "file"],
-                    "output_modalities": ["text", "image"]
-                }
-            },
-            {
-                "id": "anthropic/claude-3.5-sonnet",
-                "name": "Claude 3.5 Sonnet",
-                "context_length": 200000,
-                "supported_parameters": ["temperature", "tools"],
-                "architecture": {
-                    "modality": "text+image->text",
-                    "input_modalities": ["text", "image"],
-                    "output_modalities": ["text"]
-                }
-            },
-            {
-                "id": "black-forest-labs/flux-1.1-pro",
-                "name": "Flux 1.1 Pro",
-                "context_length": null,
-                "supported_parameters": ["resolution", "image_size"],
-                "architecture": {
-                    "modality": "text->image",
-                    "input_modalities": ["text"],
-                    "output_modalities": ["image"]
-                }
-            },
-            {
-                "id": "google/gemini-3-pro-image",
-                "name": "Gemini 3 Pro Image",
-                "context_length": 1000000,
-                "supported_parameters": ["temperature", "tools"],
-                "architecture": {
-                    "modality": "text+image->text+image",
-                    "input_modalities": ["text", "image"],
-                    "output_modalities": ["text", "image"]
-                }
-            },
-            {
-                "id": "meta/llama-3.1-8b",
-                "name": "Llama 3.1 8B",
-                "context_length": 128000,
-                "supported_parameters": ["temperature"],
-                "architecture": {
-                    "modality": "text->text",
-                    "input_modalities": ["text"],
-                    "output_modalities": ["text"]
-                }
-            }
-        ]
+    // Image model with full resolution support
+    let mut seedream_sp = BTreeMap::new();
+    seedream_sp.insert("resolution".to_string(), param_enum(&["1K", "2K", "4K"]));
+    let seedream = make_entry_json(
+        "bytedance-seed/seedream-4.5",
+        &["image"],
+        seedream_sp,
+    );
+
+    // Image model without resolution (only output_format and n)
+    let mut ming_sp = BTreeMap::new();
+    ming_sp.insert(
+        "output_format".to_string(),
+        param_enum(&["png", "webp"]),
+    );
+    let ming = make_entry_json(
+        "inclusionai/ming-image-0.1",
+        &["image"],
+        ming_sp,
+    );
+
+    // Image model with 1K only
+    let mut krea_sp = BTreeMap::new();
+    krea_sp.insert("resolution".to_string(), param_enum(&["1K"]));
+    let krea = make_entry_json("krea/krea-2-large", &["image"], krea_sp);
+
+    let body = serde_json::json!({
+        "data": [seedream, ming, krea]
     });
 
     Mock::given(method("GET"))
-        .and(path("/api/v1/models"))
+        .and(path("/api/v1/images/models"))
         .and(header("Authorization", "Bearer sk-test"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(&all_models_response))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&body))
         .mount(&mock_server)
         .await;
 
@@ -81,52 +80,42 @@ async fn test_list_models_filter() {
     let models = openrouter_image_core::fetch_image_models(
         &client,
         "sk-test",
-        Some(&format!("{}/api/v1/models", mock_server.uri())),
+        Some(&format!("{}/api/v1/images/models", mock_server.uri())),
     )
     .await
     .expect("fetch should succeed");
 
     let ids: Vec<&str> = models.iter().map(|m| m.id.as_str()).collect();
+    assert_eq!(ids.len(), 3, "expected 3 image models");
+    assert!(ids.contains(&"bytedance-seed/seedream-4.5"));
+    assert!(ids.contains(&"inclusionai/ming-image-0.1"));
+    assert!(ids.contains(&"krea/krea-2-large"));
 
-    // Image-capable (output_modalities contains "image") must be included.
-    assert!(
-        ids.contains(&"openai/gpt-5-image"),
-        "should include openai/gpt-5-image"
-    );
-    assert!(
-        ids.contains(&"black-forest-labs/flux-1.1-pro"),
-        "should include flux-1.1-pro"
-    );
-    assert!(
-        ids.contains(&"google/gemini-3-pro-image"),
-        "should include gemini-3-pro-image"
-    );
-
-    // Text-only models must be excluded.
-    assert!(
-        !ids.contains(&"anthropic/claude-3.5-sonnet"),
-        "should NOT include claude"
-    );
-    assert!(
-        !ids.contains(&"meta/llama-3.1-8b"),
-        "should NOT include llama"
-    );
-
-    assert_eq!(ids.len(), 3, "expected exactly 3 image-capable models");
-
-    // Resolution support is detected from supported_parameters.
-    let gpt5 = models.iter().find(|m| m.id == "openai/gpt-5-image").unwrap();
-    assert!(
-        openrouter_image_core::supports_resolution(gpt5),
-        "gpt-5-image should advertise resolution support"
-    );
-
-    let gemini = models
+    // Resolution enum decoding
+    let seedream_entry = models
         .iter()
-        .find(|m| m.id == "google/gemini-3-pro-image")
+        .find(|m| m.id == "bytedance-seed/seedream-4.5")
         .unwrap();
-    assert!(
-        !openrouter_image_core::supports_resolution(gemini),
-        "gemini-3-pro-image should NOT advertise resolution support"
+    assert!(openrouter_image_core::supports_resolution(seedream_entry));
+    assert_eq!(
+        openrouter_image_core::resolution_values(seedream_entry),
+        Some(vec!["1K".to_string(), "2K".to_string(), "4K".to_string()])
+    );
+
+    let ming_entry = models
+        .iter()
+        .find(|m| m.id == "inclusionai/ming-image-0.1")
+        .unwrap();
+    assert!(!openrouter_image_core::supports_resolution(ming_entry));
+    assert_eq!(
+        openrouter_image_core::resolution_values(ming_entry),
+        None
+    );
+
+    let krea_entry = models.iter().find(|m| m.id == "krea/krea-2-large").unwrap();
+    assert!(openrouter_image_core::supports_resolution(krea_entry));
+    assert_eq!(
+        openrouter_image_core::resolution_values(krea_entry),
+        Some(vec!["1K".to_string()])
     );
 }

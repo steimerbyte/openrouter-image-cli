@@ -106,31 +106,29 @@ pub fn models(models: &[ModelEntry]) {
 
 /// Print image models as a human-readable table.
 pub fn models_table(models: &[ModelEntry]) {
-    use crate::list_models::{is_image_model, supports_resolution};
+    use crate::list_models::{is_image_model, resolution_values};
     println!(
         "openrouter-image v{}  (live from openrouter.ai)",
         env!("CARGO_PKG_VERSION")
     );
     println!();
     println!(
-        "{:50} {:>10} {:>4} {:>4}",
-        "ID", "Context", "Res", "Out"
+        "{:50} {:>15} {:>4}",
+        "ID", "Resolution", "Out"
     );
-    println!("{}", "-".repeat(80));
+    println!("{}", "-".repeat(75));
     for m in models {
-        let ctx = m
-            .context_length
-            .map(|c| c.to_string())
+        let res = resolution_values(m)
+            .map(|v| v.join(","))
             .unwrap_or_else(|| "—".to_string());
-        let res = if supports_resolution(m) { "yes" } else { "—" };
         let out = if is_image_model(m) { "img" } else { "—" };
-        println!("{:50} {:>10} {:>4} {:>4}", m.id, ctx, res, out);
+        println!("{:50} {:>15} {:>4}", m.id, res, out);
     }
     println!();
     println!("Total: {} image-capable model(s)", models.len());
-    println!("Default: openai/gpt-5-image");
+    println!("Default: bytedance-seed/seedream-4.5  (supports 1K, 2K, 4K)");
     println!();
-    println!("Res = model lists 'resolution' (or image_size / *_resolution) in supported_parameters.");
+    println!("Resolution = enum values from supported_parameters.resolution.");
     println!("Out = architecture.output_modalities contains 'image'.");
 }
 

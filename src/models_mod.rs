@@ -17,7 +17,7 @@ use serde::Deserialize;
 pub struct GenerationParams {
     /// Prompt text.
     pub prompt: String,
-    /// Model slug (e.g. "openai/gpt-5-image").
+    /// Model slug (e.g. "bytedance-seed/seedream-4.5").
     pub model: String,
     /// Optional reference image data URIs.
     pub image_refs: Vec<String>,
@@ -25,7 +25,8 @@ pub struct GenerationParams {
     pub output_paths: Vec<PathBuf>,
     /// Number of images requested.
     pub n: u8,
-    /// Optional resolution preset: "512" | "1K" | "2K" | "4K".
+    /// Optional resolution preset: "512" | "1K" | "2K" | "4K". When None, the
+    /// OpenRouter API default (`2K`) applies.
     pub resolution: Option<String>,
     /// HTTP timeout in milliseconds.
     pub timeout_ms: u64,
@@ -67,6 +68,12 @@ impl GenerationParams {
         }
 
         body
+    }
+
+    /// Effective resolution after applying defaults. Returns "2K" when unset,
+    /// matching the OpenRouter API default.
+    pub fn effective_resolution(&self) -> &str {
+        self.resolution.as_deref().unwrap_or("2K")
     }
 }
 
