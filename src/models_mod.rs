@@ -57,9 +57,6 @@ pub struct GenerationParams {
     pub provider: Option<ProviderRouting>,
     /// Observability trace metadata.
     pub trace: Option<TraceMetadata>,
-    /// Enable SSE streaming. When true, the API returns partial image chunks
-    /// via SSE events.
-    pub stream: bool,
     /// Allow overwriting an existing output file. Default: false.
     /// Only consumed in write_images(); not sent to the API body.
     pub clobber: bool,
@@ -98,7 +95,6 @@ impl Default for GenerationParams {
             session_id: None,
             provider: None,
             trace: None,
-            stream: false,
             clobber: false,
             max_image_retries: 0,
             negative_prompt: None,
@@ -234,10 +230,6 @@ impl GenerationParams {
             }
             body["trace"] = serde_json::Value::Object(obj);
         }
-        if self.stream {
-            body["stream"] = serde_json::json!(true);
-        }
-
         body
     }
 

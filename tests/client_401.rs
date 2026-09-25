@@ -43,7 +43,6 @@ async fn test_client_401_exit_3() {
         session_id: None,
         provider: None,
         trace: None,
-        stream: false,
         timeout_ms: 30_000,
         clobber: false,
         max_image_retries: 0,

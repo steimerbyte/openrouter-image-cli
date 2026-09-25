@@ -2,9 +2,6 @@
 //!
 //! Retry policy: exactly 1× retry on 5xx errors with 2-second sleep.
 //! No retry on 4xx (including 429 — treated as API error, exit 4).
-//!
-//! Streaming: when `params.stream = true`, sends `Accept: text/event-stream`
-//! and parses SSE events (`partial_image`, `completed`, `error`).
 
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 use std::time::{Duration, Instant};
@@ -15,7 +12,7 @@ use tokio::time::sleep;
 
 use crate::config_mod::Config;
 use crate::error_mod::ApiError;
-use crate::models_mod::{self, ApiResponse, GenerationParams};
+use crate::models_mod::{ApiResponse, GenerationParams};
 use crate::progress_mod::ProgressEvent;
 use crate::reference_mod::validate_reference;
 
@@ -236,7 +233,7 @@ impl HttpClient {
         let start = Instant::now();
 
         let result = self
-            .do_request(api_key.clone(), &body, params.stream, &mut on_progress)
+            .do_request(api_key.clone(), &body, &mut on_progress)
             .await;
 
         match result {
@@ -258,9 +255,7 @@ impl HttpClient {
                     });
                     sleep(BACKOFF_DELAY).await;
 
-                    let retry_result = self
-                        .do_request(api_key, &body, params.stream, &mut on_progress)
-                        .await;
+                    let retry_result = self.do_request(api_key, &body, &mut on_progress).await;
                     match retry_result {
                         Ok(response) => {
                             on_progress(ProgressEvent::HttpStatus { status: 200 });
@@ -275,12 +270,11 @@ impl HttpClient {
         }
     }
 
-    /// Perform the HTTP request. Handles both buffered and SSE streaming modes.
+    /// Perform the HTTP request (single-shot buffered mode).
     async fn do_request<F>(
         &self,
         api_key: String,
         body: &serde_json::Value,
-        stream: bool,
         on_progress: &mut F,
     ) -> Result<ApiResponse, ApiError>
     where
@@ -292,10 +286,6 @@ impl HttpClient {
             .header("Authorization", format!("Bearer {}", api_key))
             .header("Content-Type", "application/json")
             .header("Accept", "application/json");
-
-        if stream {
-            req = req.header("Accept", "text/event-stream");
-        }
 
         if let Ok(referer) = std::env::var("OPENROUTER_HTTP_REFERER") {
             if !referer.is_empty() {
@@ -338,145 +328,12 @@ impl HttpClient {
             return Err(err);
         }
 
-        if stream {
-            self.parse_sse_stream(resp, on_progress).await
-        } else {
-            let body_text = resp.text().await.unwrap_or_default();
-            serde_json::from_str::<ApiResponse>(&body_text).map_err(|e| ApiError::Http {
-                status: 500,
-                message: format!("failed to parse API response: {}", e),
-            })
-        }
-    }
-
-    /// Parse an SSE event stream and assemble the final ApiResponse.
-    async fn parse_sse_stream<F>(
-        &self,
-        resp: reqwest::Response,
-        on_progress: &mut F,
-    ) -> Result<ApiResponse, ApiError>
-    where
-        F: FnMut(ProgressEvent),
-    {
-        use models_mod::{ImageData, Usage};
-
-        // Read full response text — SSE is UTF-8
-        let body_text = resp.text().await.map_err(ApiError::Network)?;
-        let mut buffer = body_text;
-        let mut final_images: Vec<ImageData> = Vec::new();
-        let mut usage: Option<Usage> = None;
-
-        // Process complete lines from the buffer
-        while let Some(pos) = buffer.find('\n') {
-            let line = buffer[..pos].trim().to_string();
-            buffer = buffer[pos + 1..].to_string();
-
-            if line.is_empty() || line.starts_with(':') {
-                continue;
-            }
-
-            // Parse SSE "event: <type>" line
-            if let Some(event_line) = line.strip_prefix("event: ") {
-                let event_type = event_line.trim();
-                // Read the next "data: ..." line
-                while let Some(nl_pos) = buffer.find('\n') {
-                    let data_line = buffer[..nl_pos].trim().to_string();
-                    buffer = buffer[nl_pos + 1..].to_string();
-                    if data_line.is_empty() || data_line.starts_with(':') {
-                        continue;
-                    }
-                    if let Some(data_payload) = data_line.strip_prefix("data: ") {
-                        let data_str = data_payload.trim();
-                        match event_type {
-                            "partial_image" => {
-                                if let Ok(event) =
-                                    serde_json::from_str::<SsePartialImageEvent>(data_str)
-                                {
-                                    on_progress(ProgressEvent::StreamPartial {
-                                        index: event.index.unwrap_or(0) as u8,
-                                        b64_length: event.b64_json.len(),
-                                    });
-                                }
-                            }
-                            "completed" => {
-                                if let Ok(event) =
-                                    serde_json::from_str::<SseCompletedEvent>(data_str)
-                                {
-                                    on_progress(ProgressEvent::StreamComplete {
-                                        count: event.data.as_ref().map(|d| d.len()).unwrap_or(0)
-                                            as u8,
-                                    });
-                                    if let Some(data) = event.data {
-                                        final_images.extend(data);
-                                    }
-                                    usage = event.usage;
-                                }
-                            }
-                            "error" => {
-                                if let Ok(err_obj) = serde_json::from_str::<SseErrorEvent>(data_str)
-                                {
-                                    let msg = err_obj
-                                        .error
-                                        .as_ref()
-                                        .and_then(|e| e.message.as_ref())
-                                        .cloned()
-                                        .unwrap_or_else(|| "SSE stream error".into());
-                                    return Err(ApiError::Http {
-                                        status: 500,
-                                        message: msg,
-                                    });
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                    break;
-                }
-            }
-        }
-
-        // Assemble final ApiResponse from streamed data
-        let created = Some(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs() as i64,
-        );
-
-        Ok(ApiResponse {
-            created,
-            data: if final_images.is_empty() {
-                None
-            } else {
-                Some(final_images)
-            },
-            usage,
-            error: None,
+        let body_text = resp.text().await.unwrap_or_default();
+        serde_json::from_str::<ApiResponse>(&body_text).map_err(|e| ApiError::Http {
+            status: 500,
+            message: format!("failed to parse API response: {}", e),
         })
     }
-}
-
-// ---------------------------------------------------------------------------
-// SSE event types (local, parsed from SSE data lines)
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, serde::Deserialize)]
-struct SsePartialImageEvent {
-    index: Option<i32>,
-    #[serde(rename = "b64_json")]
-    b64_json: String,
-}
-
-#[derive(Debug, serde::Deserialize)]
-struct SseCompletedEvent {
-    data: Option<Vec<models_mod::ImageData>>,
-    #[serde(rename = "usage", default)]
-    usage: Option<models_mod::Usage>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-struct SseErrorEvent {
-    error: Option<models_mod::ApiErrorBody>,
 }
 
 /// Build the request body from GenerationParams.
@@ -543,10 +400,6 @@ fn build_request_body(params: &GenerationParams, ref_urls: &[&str]) -> serde_jso
         let trace_val = serde_json::to_value(trace).unwrap_or_else(|_| serde_json::json!({}));
         body["trace"] = trace_val;
     }
-    if params.stream {
-        body["stream"] = serde_json::json!(true);
-    }
-
     body
 }
 
@@ -585,7 +438,6 @@ mod tests {
             session_id: None,
             provider: None,
             trace: None,
-            stream: false,
             timeout_ms: 120_000,
             clobber: false,
             max_image_retries: 0,
@@ -642,8 +494,6 @@ mod tests {
         params.size = Some("2048x2048".to_string());
         params.user = Some("user_abc".to_string());
         params.session_id = Some("sess_xyz".to_string());
-        params.stream = true;
-
         let body = build_request_body(&params, &[]);
         assert_eq!(body["aspect_ratio"], "16:9");
         assert_eq!(body["background"], "transparent");
@@ -654,7 +504,6 @@ mod tests {
         assert_eq!(body["size"], "2048x2048");
         assert_eq!(body["user"], "user_abc");
         assert_eq!(body["session_id"], "sess_xyz");
-        assert_eq!(body["stream"], true);
     }
 
     #[test]

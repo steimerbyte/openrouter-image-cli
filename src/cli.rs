@@ -148,10 +148,6 @@ pub struct Generate {
     #[arg(long, short = 'v')]
     pub verbose: bool,
 
-    /// Stream progress as NDJSON events (default when --json is set).
-    #[arg(long)]
-    pub stream: bool,
-
     /// Allow overwriting an existing output file. Default: false.
     #[arg(long)]
     pub clobber: bool,
@@ -311,7 +307,6 @@ impl Generate {
             json: self.json,
             dry_run: self.dry_run,
             _verbose: self.verbose,
-            stream: self.stream,
             output_format: Some(self.output_format),
             aspect_ratio: self.aspect_ratio,
             background: self.background,
@@ -346,7 +341,6 @@ pub struct ValidatedGenerate {
     pub json: bool,
     pub dry_run: bool,
     pub _verbose: bool,
-    pub stream: bool,
     // New fields
     pub output_format: Option<OutputFormat>,
     pub aspect_ratio: Option<String>,

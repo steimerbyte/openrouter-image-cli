@@ -2,7 +2,7 @@
 //!
 //! Covers every new field from the audit:
 //!   aspect_ratio, background, output_format, output_compression,
-//!   quality, seed, size, user, session_id, provider, trace, stream
+//!   quality, seed, size, user, session_id, provider, trace
 
 use openrouter_image_core::GenerationParams;
 
@@ -39,7 +39,6 @@ fn full_params() -> GenerationParams {
             parent_span_id: Some("span-parent-xyz".to_string()),
             extra: HashMap::new(),
         }),
-        stream: true,
         timeout_ms: 120_000,
         clobber: false,
         max_image_retries: 0,
@@ -66,7 +65,6 @@ fn minimal_params() -> GenerationParams {
         session_id: None,
         provider: None,
         trace: None,
-        stream: false,
         timeout_ms: 120_000,
         clobber: false,
         max_image_retries: 0,
@@ -95,7 +93,6 @@ fn test_all_fields_present() {
     assert_eq!(body["size"], "2048x2048");
     assert_eq!(body["user"], "user_abc123");
     assert_eq!(body["session_id"], "sess_def456");
-    assert_eq!(body["stream"], true);
 
     // Provider routing
     let prov = &body["provider"];
